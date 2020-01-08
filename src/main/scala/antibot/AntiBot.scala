@@ -28,8 +28,8 @@ object AntiBot {
 
     val spark = SparkSession.builder
       .appName("AntiBot")
-      .config("spark.redis.host", config.redis._1)
-      .config("spark.redis.port", config.redis._2)
+      .config("spark.redis.host", config.redis.host)
+      .config("spark.redis.port", config.redis.port)
       .config("spark.redis.timeout", "10000")
       .getOrCreate()
 
@@ -67,7 +67,7 @@ object AntiBot {
           .select(e("ip"), e("event_time"), e("url"),
             b("count").isNotNull.as("is_bot"))
         r.write.mode(SaveMode.Append)
-          .cassandraFormat(config.cassandra._2, config.cassandra._1)
+          .cassandraFormat(config.cassandra.table, config.cassandra.keyspace)
           .save()
         // r.show()
       } start()
