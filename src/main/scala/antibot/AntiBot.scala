@@ -61,12 +61,14 @@ object AntiBot {
       } start()
 
     events.writeStream.outputMode(OutputMode.Append())
-      .foreachBatch { (e: DataFrame, _: Long) =>
+      .foreachBatch { (e: DataFrame, n: Long) =>
+        println(s"AntiBot executes batch #$n")
         val b = readRedis()
         val r = e.join(b, e("ip") === b("ip"), "left")
           .select(e("ip"), e("event_time"), e("url"),
             b("count").isNotNull.as("is_bot"))
-        r.write.mode(SaveMode.Append)
+        r.withColumn("type", lit("click"))
+          .write.mode(SaveMode.Append)
           .cassandraFormat(config.cassandra.table, config.cassandra.keyspace)
           .save()
         // r.show()

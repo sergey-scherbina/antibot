@@ -28,6 +28,7 @@ trait AntibotSuite extends Suite with BeforeAndAfterAll with SparkTemplate
       |""".stripMargin,
     """
       |create table if not exists antibot.events(
+      |  "type" text,
       |  ip inet,
       |  is_bot boolean,
       |  event_time timestamp,
