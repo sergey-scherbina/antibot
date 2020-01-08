@@ -23,11 +23,11 @@ object DataFormat {
 
     import redis._
 
-    def redisFormat(table: String, key: String, ttl: String) =
+    def redisFormat(table: String, key: String, ttl: Int) =
       f.format(RedisFormat)
         .option(SqlOptionTableName, table)
         .option(SqlOptionKeyColumn, "ip")
-        .option(SqlOptionTTL, ttl)
+        .option(SqlOptionTTL, s"$ttl")
 
     def kafkaFormat(brokers: String, topic: String) =
       f.format("kafka")

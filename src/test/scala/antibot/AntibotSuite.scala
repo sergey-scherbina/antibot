@@ -15,10 +15,12 @@ import scala.annotation.tailrec
 import scala.concurrent.ExecutionContext.Implicits._
 import scala.concurrent._
 import scala.concurrent.duration._
-import scala.util.{Failure, Random, Success, Try}
+import scala.util._
 
 trait AntibotSuite extends Suite with BeforeAndAfterAll with SparkTemplate
   with EmbeddedCassandra with EmbeddedRedis with EmbeddedKafka {
+
+  System.setProperty("baseDir", ".") // for embedded cassandra ports directory
 
   val clickTopic = "click"
   val cassandraInit = Seq(

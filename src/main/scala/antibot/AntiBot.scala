@@ -26,27 +26,23 @@ object AntiBot {
   def main(args: Array[String] = Array()): Unit = {
     println(s"Started AntiBot with config: $config")
 
-    val spark = SparkSession.builder
-      .appName("AntiBot")
-      .config("spark.redis.host", config.redis.host)
-      .config("spark.redis.port", config.redis.port)
-      .config("spark.redis.timeout", "10000")
-      .getOrCreate()
+    val spark = config.redis(SparkSession.builder
+      .appName("AntiBot")).getOrCreate()
 
     spark.sparkContext.setLogLevel("ERROR")
 
     import spark.implicits._
 
-    def readRedis() = config
-      .redisFormat(spark.read).schema(botsStruct).load()
+    def readRedis() = config.redis(spark.read)
+      .schema(botsStruct).load()
 
     readRedis() // warm up redis, seems like it's essential
 
-    val events = config.kafkaFormat(spark.readStream).load()
+    val events = config.kafka(spark.readStream).load()
       .select(from_json($"value".cast(DataTypes.StringType), eventStruct).as("e"))
       .na.drop("any").where($"e.type" === "click")
-      .select($"e.ip", $"e.url",
-        to_timestamp(from_unixtime($"e.event_time")).as("event_time"))
+      .select($"e.ip", $"e.url", to_timestamp(
+        from_unixtime($"e.event_time")).as("event_time"))
       .withWatermark("event_time", "10 minutes")
 
     // events.writeStream.format("console").outputMode(OutputMode.Append()).start()
@@ -57,7 +53,7 @@ object AntiBot {
       .select($"ip", $"window.start".as("start"), $"count")
       .writeStream.outputMode(OutputMode.Complete())
       .foreachBatch { (b: DataFrame, _: Long) =>
-        config.redisFormat(b.write.mode(SaveMode.Overwrite)).save()
+        config.redis(b.write.mode(SaveMode.Overwrite)).save()
       } start()
 
     events.writeStream.outputMode(OutputMode.Append())

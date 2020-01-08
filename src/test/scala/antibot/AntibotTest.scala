@@ -8,7 +8,7 @@ class AntibotTest extends AnyFunSuite with AntibotSuite {
   test("sanity check") {
 
     Prop.forAll(clicks) { case (ip, times) =>
-      println(s"click $ip $times times ...")
+      println(s"$ip clicks $times times ...")
       for (_ <- 1 to times) click(ip)
       true
     } check {
@@ -17,7 +17,7 @@ class AntibotTest extends AnyFunSuite with AntibotSuite {
 
     assert(getEvents(false).iterator().hasNext)
     assert(getEvents(true).iterator().hasNext)
-    
+
   }
 
 }
