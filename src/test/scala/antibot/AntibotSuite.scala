@@ -20,6 +20,23 @@ import scala.util.{Failure, Random, Success, Try}
 trait AntibotSuite extends Suite with BeforeAndAfterAll with SparkTemplate
   with EmbeddedCassandra with EmbeddedRedis with EmbeddedKafka {
 
+  val clickTopic = "click"
+  val cassandraInit = Seq(
+    """
+      |create keyspace if not exists antibot with replication = {
+      |    'class' : 'SimpleStrategy', 'replication_factor' : 1 } ;
+      |""".stripMargin,
+    """
+      |create table if not exists antibot.events(
+      |  ip inet,
+      |  is_bot boolean,
+      |  event_time timestamp,
+      |  url text,
+      |  primary key (ip, event_time)
+      |);
+      |""".stripMargin
+  )
+
   val kafka = EmbeddedKafka.start()
   val redis = RedisServer.builder().port(freePort()).setting("bind 127.0.0.1").build()
   val sparkConf = defaultConf.set("spark.redis.port", redis.ports().get(0).toString)
@@ -30,13 +47,15 @@ trait AntibotSuite extends Suite with BeforeAndAfterAll with SparkTemplate
   val IP = for {x1 <- octet; x2 <- octet;
                 x3 <- octet; x4 <- octet} yield s"$x1.$x2.$x3.$x4"
   val clicks = for {ip <- IP; n <- Gen.choose(1, 30)} yield ip -> n
-  val clickTopic = "click"
 
   def click(ip: String) = publishStringMessageToKafka(clickTopic,
     s"""{"type": "$clickTopic", "ip": "${ip}",
        | "event_time": "${(System.currentTimeMillis / 1000) + Random.nextInt(10)}",
        | "url": "https://blog.griddynamics.com/in-stream-processing-service-blueprint"}"""
       .stripMargin)
+
+  def getEvents(isBot: Boolean) = cassandra.withSessionDo(
+    _.execute(s"select * from antibot.events where is_bot = $isBot ALLOW FILTERING;"))
 
   override def clearCache(): Unit = CassandraConnector.evictCache()
 
@@ -49,28 +68,12 @@ trait AntibotSuite extends Suite with BeforeAndAfterAll with SparkTemplate
       useSparkConf(sparkConf)
       redis.start()
       createCustomTopic(clickTopic)
-      cassandra.withSessionDo { cass =>
-        cass.execute(
-          """
-            |create keyspace if not exists antibot with replication = {
-            |    'class' : 'SimpleStrategy', 'replication_factor' : 1 } ;
-            |""".stripMargin)
-        cass.execute(
-          """
-            |create table if not exists antibot.events(
-            |  ip inet,
-            |  is_bot boolean,
-            |  event_time timestamp,
-            |  url text,
-            |  primary key (ip, event_time)
-            |);
-            |""".stripMargin)
-      }
+      cassandra.withSessionDo(cass =>
+        cassandraInit.foreach(cass.execute))
     }.failed.map(_.printStackTrace())
       .foreach(_ => System.exit(1))
     antiBot.failed.map(_.printStackTrace())
       .foreach(_ => System.exit(1))
-
     println("===--- ... Antibot started! ---===")
   }
 

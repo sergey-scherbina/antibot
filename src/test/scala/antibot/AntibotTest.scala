@@ -15,21 +15,9 @@ class AntibotTest extends AnyFunSuite with AntibotSuite {
       _ withMinSuccessfulTests 300
     }
 
-    {
-      val bots = cassandra.withSessionDo(
-        _.execute("select * from antibot.events" +
-          " where is_bot = true ALLOW FILTERING;"))
-
-      assert(bots.iterator().hasNext)
-    }
-
-    {
-      val notBots = cassandra.withSessionDo(
-        _.execute("select * from antibot.events" +
-          " where is_bot = false ALLOW FILTERING;"))
-
-      assert(notBots.iterator().hasNext)
-    }
+    assert(getEvents(false).iterator().hasNext)
+    assert(getEvents(true).iterator().hasNext)
+    
   }
 
 }
