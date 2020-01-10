@@ -23,10 +23,11 @@ object Config {
 
   case class RedisConf(host: String, port: String, table: String, key: String, ttl: Int) {
     def apply[F: DataFormat](f: F) = f.redisFormat(table, key, ttl)
+    def read(spark: SparkSession) = apply(spark.read)
     def apply(b: SparkSession.Builder) = b
       .config("spark.redis.host", config.redis.host)
       .config("spark.redis.port", config.redis.port)
-      .config("spark.redis.timeout", "10000")
+      .config("spark.redis.timeout", "30000")
   }
 
   def setProperties(redisPort: Int, kafkaPort: Int, kafkaTopic: String): Unit = {

@@ -68,4 +68,5 @@ Fields to store in Cassandra/AWS S3:
 “is_bot”: true,
 "event_time": "1500028835",
 "url": "https://blog.griddynamics.com/in-stream-processing-service-blueprint"
-}```
+}
+```
