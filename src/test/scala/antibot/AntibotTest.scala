@@ -27,18 +27,20 @@ class AntibotTest extends AnyFunSuite with AntibotSuite {
     bots.foreach(println)
     println()
 
-    waitStreams()
+    waitStreams(AntiBot.botsDetectorQueryName)
 
-    println("Redis:")
-    AntiBot.readRedis(sparkSession)
-      .collect().foreach(println)
-    println()
+    /*
+        println("Redis:")
+        AntiBot.readRedis(sparkSession)
+          .foreach(println(_))
+        println()
+    */
 
     /*
         println("Cassandra:")
         sparkSession.read
           .cassandraFormat("events", "antibot")
-          .load().collect().foreach(println)
+          .load().foreach(println(_))
         println()
     */
 

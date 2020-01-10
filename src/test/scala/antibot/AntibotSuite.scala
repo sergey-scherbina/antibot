@@ -77,15 +77,12 @@ trait AntibotSuite extends Suite with BeforeAndAfterAll with SparkTemplate
       useSparkConf(sparkConf)
       redis.start()
       createCustomTopic(clickTopic)
-      cassandra.withSessionDo(cass =>
-        initCassandra.foreach(cass.execute))
-    }.failed.map(_.printStackTrace())
-      .foreach(_ => System.exit(1))
-    antiBot.failed.map(_.printStackTrace())
-      .foreach(_ => System.exit(1))
+      cassandra.withSessionDo(cass => initCassandra.foreach(cass.execute))
+    }.failed.map(_.printStackTrace()).foreach(_ => sys.exit(1))
+    antiBot.failed.map(_.printStackTrace()).foreach(_ => sys.exit(1))
     println("===--- ... Antibot started! ---===")
     showPorts()
-    waitStreams(true)
+    waitStreams(AntiBot.botsDetectorQueryName, true)
   }
 
   override protected def afterAll(): Unit = {
@@ -120,24 +117,24 @@ trait AntibotSuite extends Suite with BeforeAndAfterAll with SparkTemplate
     b
   }
 
-  def waitStreams(start: Boolean = false, time: Duration = Duration.Inf) = {
+  def waitStreams(queryName: String, start: Boolean = false, time: Duration = Duration.Inf) = {
     println("Waiting streams ...")
     val latch = Promise[Unit]()
     sparkSession.streams.addListener(new StreamingQueryListener {
       override def onQueryStarted(event: StreamingQueryListener.QueryStartedEvent): Unit =
-        if (start) unlock()
+        if (start && queryName == event.name) unlock()
       override def onQueryProgress(event: StreamingQueryListener.QueryProgressEvent): Unit =
-        if (!start && event.progress.numInputRows == 0) unlock()
+        if (!start && queryName == event.progress.name &&
+          event.progress.numInputRows == 0) unlock()
       override def onQueryTerminated(event: StreamingQueryListener.QueryTerminatedEvent): Unit =
         unlock()
-
       private def unlock(): Unit = {
         println("Streams are ready.")
         sparkSession.streams.removeListener(this)
         if (!latch.isCompleted) latch.success()
       }
     })
-    Await.ready(latch.future, time)
+    Await.result(latch.future, time)
   }
 
 }
