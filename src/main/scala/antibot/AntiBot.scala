@@ -13,6 +13,7 @@ import scala.concurrent.duration._
 object AntiBot {
 
   val botsDetectorQueryName = "bots.detector"
+  val eventsOutputQueryName = "events.output"
 
   val eventStruct = structType(
     "type" -> StringType,
@@ -33,6 +34,9 @@ object AntiBot {
   def readRedis(spark: SparkSession) =
     config.redis.read(spark).schema(botsStruct).load()
 
+  def debugDump(s: String, d: DataFrame) =
+    println(d.collect().map(r => s"$s:$r").mkString("\n"))
+
   def main(args: Array[String] = Array()): Unit = {
     println(s"Started AntiBot with config: $config")
 
@@ -52,6 +56,9 @@ object AntiBot {
         , to_timestamp(from_unixtime($"e.event_time")).as("event_ts")
       ).withWatermark("event_ts", "10 minutes")
 
+    events.writeStream.foreachBatch((d, _) => debugDump("k", d))
+      .queryName("events.input").start()
+
     events.groupBy($"ip", window($"event_ts", "10 seconds"))
       .count()
       //.where($"count" > 20)
@@ -63,12 +70,7 @@ object AntiBot {
       .trigger(Trigger.ProcessingTime(0))
       .foreachBatch { (b: DataFrame, n: Long) =>
         config.redis(b.write.mode(SaveMode.Overwrite)).save()
-        println {
-          s"""
-             |Redis #$n
-             |${b.collect().mkString("\n")}
-             |""".stripMargin
-        }
+        debugDump("r", b)
       } queryName botsDetectorQueryName start()
 
     events.writeStream.outputMode(OutputMode.Append())
@@ -85,13 +87,8 @@ object AntiBot {
           .cassandraFormat(config.cassandra.table,
             config.cassandra.keyspace)
           .save()
-        println {
-          s"""
-             |Cassandra #$n
-             |${r.collect().mkString("\n")}
-             |""".stripMargin
-        }
-      } start()
+        debugDump("c", r)
+      } queryName eventsOutputQueryName start()
 
     spark.streams.awaitAnyTermination()
   }

@@ -7,42 +7,35 @@ class AntibotTest extends AnyFunSuite with AntibotSuite {
 
   test("sanity check") {
 
+    println("Warming up ...")
+    Prop.forAll(clicks) { case (ip, times) =>
+      for (_ <- 1 to times) click(ip)
+      true
+    } check
+
+    Thread.sleep(1000)
+
     var bots = Map[String, List[Long]]()
       .withDefaultValue(List())
 
     Prop.forAll(clicks) { case (ip, times) =>
       println(s"$ip clicks $times times ...")
       for (n <- 1 to times) {
-        Thread.sleep(100)
         if (n <= 20) click(ip) else
           bots = bots.updated(ip,
             click(ip) :: bots(ip))
       }
+      Thread.sleep(100)
       true
-    } check {
-      _ withMinSuccessfulTests 10
-    }
+    } check
 
     println("Bots:")
     bots.foreach(println)
     println()
 
     waitStreams(AntiBot.botsDetectorQueryName)
-
-    /*
-        println("Redis:")
-        AntiBot.readRedis(sparkSession)
-          .foreach(println(_))
-        println()
-    */
-
-    /*
-        println("Cassandra:")
-        sparkSession.read
-          .cassandraFormat("events", "antibot")
-          .load().foreach(println(_))
-        println()
-    */
+    waitStreams(AntiBot.eventsOutputQueryName)
+    Thread.sleep(1000)
 
     val res = cassandra.withSessionDo { cass =>
       bots.forall {
