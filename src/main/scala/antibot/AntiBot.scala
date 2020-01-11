@@ -56,12 +56,12 @@ object AntiBot {
         , to_timestamp(from_unixtime($"e.event_time")).as("event_ts")
       ).withWatermark("event_ts", "10 minutes")
 
-    events.writeStream.foreachBatch((d, _) => debugDump("k", d))
-      .queryName("events.input").start()
+    //    events.writeStream.foreachBatch((d, _) => debugDump("k", d))
+    //      .queryName("events.input").start()
 
-    events.groupBy($"ip", window($"event_ts", "10 seconds"))
-      .count()
-      //.where($"count" > 20)
+    events.groupBy($"ip", window($"event_ts",
+      "10 seconds", "1 second"))
+      .count().where($"count" > 20)
       .withWatermark("window", "10 minutes")
       .select($"ip", $"count",
         unix_timestamp($"window.start").as("start"),
