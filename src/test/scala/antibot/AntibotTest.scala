@@ -7,14 +7,6 @@ class AntibotTest extends AnyFunSuite with AntibotSuite {
 
   test("sanity check") {
 
-    println("Warming up ...")
-    Prop.forAll(clicks) { case (ip, times) =>
-      for (_ <- 1 to times) click(ip)
-      true
-    } check
-
-    Thread.sleep(1000)
-
     var bots = Map[String, List[Long]]()
       .withDefaultValue(List())
 

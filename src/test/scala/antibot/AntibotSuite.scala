@@ -132,7 +132,7 @@ trait AntibotSuite extends Suite with BeforeAndAfterAll with SparkTemplate
       override def onQueryProgress(event: StreamingQueryListener.QueryProgressEvent): Unit =
         if (!start && queryName == event.progress.name &&
           event.progress.numInputRows == 0) {
-          println(s"query progress with zero lines of input: $queryName")
+          println(s"query get zero lines of input: $queryName")
           unlock()
         }
       override def onQueryTerminated(event: StreamingQueryListener.QueryTerminatedEvent): Unit = {

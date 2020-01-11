@@ -62,7 +62,7 @@ object AntiBot {
     events.groupBy($"ip", window($"event_ts",
       "10 seconds", "1 second"))
       .count().where($"count" > 20)
-      .withWatermark("window", "10 minutes")
+      //.withWatermark("window", "10 minutes")
       .select($"ip", $"count",
         unix_timestamp($"window.start").as("start"),
         unix_timestamp($"window.end").as("end")
@@ -74,7 +74,7 @@ object AntiBot {
       } queryName botsDetectorQueryName start()
 
     events.writeStream.outputMode(OutputMode.Append())
-      .trigger(Trigger.ProcessingTime(1 seconds))
+      .trigger(Trigger.ProcessingTime(10 seconds))
       .foreachBatch { (e: DataFrame, n: Long) =>
         val b = readRedis(spark)
         val r = e.join(b, e("ip") === b("ip"), "left")
