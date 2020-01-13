@@ -58,6 +58,7 @@ object AntiBot {
       .foreachBatch { (e: DataFrame, n: Long) =>
         println(s"Batch #$n started")
 
+        // ugly hack for ugly bug in redis-spark
         val r = spark.createDataFrame(spark.sparkContext
           .parallelize(readRedis(spark).collect()), redisSchema)
 
