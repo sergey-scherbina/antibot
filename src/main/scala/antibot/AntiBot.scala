@@ -77,7 +77,7 @@ object AntiBot {
 
         val c = e.as("e").join(b
           .where($"count" >= 20).as("b"),
-          $"e.ip" === $"r.ip", "left")
+          $"e.ip" === $"b.ip", "left")
           .select(e("type"), e("ip"), e("event_time"),
             $"b.count".isNotNull.as("is_bot"),
             e("time_uuid"), e("url"))
