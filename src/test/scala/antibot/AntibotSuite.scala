@@ -4,10 +4,10 @@ import java.io.IOException
 import java.net.ServerSocket
 
 import com.datastax.spark.connector.cql.CassandraConnector
-import com.datastax.spark.connector.embedded.{EmbeddedCassandra, SparkTemplate, YamlTransformations}
+import com.datastax.spark.connector.embedded._
 import com.github.sebruck.EmbeddedRedis
-import net.manub.embeddedkafka.{EmbeddedKafka, EmbeddedKafkaConfig}
-import org.apache.spark.sql.streaming.StreamingQueryListener
+import net.manub.embeddedkafka._
+import org.apache.spark.sql.streaming._
 import org.scalacheck._
 import org.scalatest._
 import redis.embedded.RedisServer
@@ -20,10 +20,11 @@ import scala.util._
 
 trait AntibotSuite extends Suite with BeforeAndAfterAll with SparkTemplate
   with EmbeddedCassandra with EmbeddedRedis with EmbeddedKafka {
-
+  override def clearCache(): Unit = CassandraConnector.evictCache()
   System.setProperty("baseDir", ".") // for embedded cassandra ports directory
 
   val clickTopic = "click"
+
   val initCassandra = Seq(
     """
       |create keyspace if not exists antibot
@@ -42,21 +43,27 @@ trait AntibotSuite extends Suite with BeforeAndAfterAll with SparkTemplate
   )
 
   val kafka = EmbeddedKafka.start()
-  val redis = RedisServer.builder().port(freePort()).setting("bind 127.0.0.1").build()
-  val sparkConf = defaultConf.setMaster("local[*]").set("spark.redis.port",
-    redis.ports().get(0).toString)
-  val cassandra = CassandraConnector(sparkConf)
-  lazy val antiBot = Future(AntiBot.main())
 
+  val redis = RedisServer.builder().port(freePort)
+    .setting("bind 127.0.0.1").build()
   sys.addShutdownHook(() => stopRedis(redis))
 
-  val octet = Gen.choose(0, 255)
-  val IP = for {x1 <- octet; x2 <- octet;
-                x3 <- octet; x4 <- octet} yield s"$x1.$x2.$x3.$x4"
+  val sparkConf = defaultConf.setMaster("local[*]")
+    .set("spark.redis.port", redis.ports().get(0).toString)
+
+  val cassandra = CassandraConnector(sparkConf)
+
+  lazy val antiBot = Future(AntiBot.main())
+
+  val octet = Gen.choose(1, 255)
+  val IP = for {x1 <- octet; x2 <- octet; x3 <- octet; x4 <- octet} yield s"$x1.$x2.$x3.$x4"
   val clicks = for {ip <- IP; n <- Gen.choose(1, 30)} yield ip -> n
 
-  def click(ip: String) = {
-    val event_time = (System.currentTimeMillis / 1000) // + Random.nextInt(10)
+  def timestamp() = System.currentTimeMillis() / 1000
+
+  def click(ip: String, rand: Boolean = false) = {
+    val event_time = timestamp() + (if (rand) Random.nextInt(10) *
+      (if (Random.nextBoolean()) 1 else -1) else 0)
     publishStringMessageToKafka(clickTopic,
       s"""{"type": "$clickTopic", "ip": "${ip}", "event_time": "$event_time",
          | "url": "https://blog.griddynamics.com/in-stream-processing-service-blueprint"}"""
@@ -64,12 +71,9 @@ trait AntibotSuite extends Suite with BeforeAndAfterAll with SparkTemplate
     event_time
   }
 
-  def getEvents(isBot: Boolean) = cassandra.withSessionDo(
-    _.execute(s"select * from antibot.events where is_bot = $isBot ALLOW FILTERING;"))
-
-  override def clearCache(): Unit = CassandraConnector.evictCache()
 
   override protected def beforeAll(): Unit = {
+    showPorts()
     println("===--- Starting Antibot ... ---===")
     Try {
       Config.setProperties(redis.ports().get(0),
@@ -81,29 +85,43 @@ trait AntibotSuite extends Suite with BeforeAndAfterAll with SparkTemplate
       cassandra.withSessionDo(cass => initCassandra.foreach(cass.execute))
     }.failed.map(_.printStackTrace()).foreach(_ => sys.exit(1))
     antiBot.failed.map(_.printStackTrace()).foreach(_ => sys.exit(1))
+    waitStreams()
     println("===--- ... Antibot started! ---===")
-    showPorts()
-    waitStreams(AntiBot.botsDetectorQueryName, true)
-    waitStreams(AntiBot.eventsOutputQueryName, true)
-    Thread.sleep(1000)
   }
 
   override protected def afterAll(): Unit = {
     println("===--- Stopping Antibot ... ---===")
-    Try(Await.ready(antiBot, 1 second))
+    Try(Await.ready(antiBot, 5 second))
     stopRedis(redis)
     kafka.stop(true)
     println("===--- ... Antibot stopped! ---===")
   }
 
+  def waitStreams(queryName: String = AntiBot.queryName, time: Duration = Duration.Inf) = {
+    println(s"Waiting stream: $queryName ...")
+    val latch = Promise[Unit]()
+    sparkSession.streams.addListener(new StreamingQueryListener {
+      override def onQueryStarted(event: StreamingQueryListener.QueryStartedEvent): Unit = ()
+      override def onQueryTerminated(event: StreamingQueryListener.QueryTerminatedEvent): Unit = ()
+      private def unlock(): Unit = {
+        println(s"Stream $queryName complete")
+        sparkSession.streams.removeListener(this)
+        if (!latch.isCompleted) latch.success()
+      }
+      override def onQueryProgress(event: StreamingQueryListener.QueryProgressEvent): Unit =
+        if (queryName == event.progress.name && event.progress.numInputRows == 0) unlock()
+    })
+    Await.result(latch.future, time)
+  }
+
   @tailrec
-  final def freePort(): Int =
+  final def freePort: Int =
     Try(new ServerSocket(0)) match {
       case Success(socket) =>
         val port = socket.getLocalPort
         socket.close()
         port
-      case Failure(_: IOException) => freePort()
+      case Failure(_: IOException) => freePort
       case Failure(e) => throw e
     }
 
@@ -114,39 +132,9 @@ trait AntibotSuite extends Suite with BeforeAndAfterAll with SparkTemplate
     println(s"Redis ports : ${redis.ports()}")
   }
 
-  def showFail(s: String, b: Boolean): Boolean = {
+  def showFail(s: String, b: Boolean) = Function.const(b) {
     if (!b)
       println("Fail: " + s)
-    b
-  }
-
-  def waitStreams(queryName: String, start: Boolean = false, time: Duration = Duration.Inf) = {
-    println(s"Waiting stream: $queryName ...")
-    val latch = Promise[Unit]()
-    sparkSession.streams.addListener(new StreamingQueryListener {
-      override def onQueryStarted(event: StreamingQueryListener.QueryStartedEvent): Unit =
-        if (start && queryName == event.name) {
-          println(s"started query: $queryName")
-          unlock()
-        }
-      override def onQueryProgress(event: StreamingQueryListener.QueryProgressEvent): Unit =
-        if (!start && queryName == event.progress.name &&
-          event.progress.numInputRows == 0) {
-          println(s"query get zero lines of input: $queryName")
-          unlock()
-        }
-      override def onQueryTerminated(event: StreamingQueryListener.QueryTerminatedEvent): Unit = {
-        println(s"terminated query: $queryName")
-        unlock()
-      }
-
-      private def unlock(): Unit = {
-        println(s"Stream $queryName is ready.")
-        sparkSession.streams.removeListener(this)
-        if (!latch.isCompleted) latch.success()
-      }
-    })
-    Await.result(latch.future, time)
   }
 
 }

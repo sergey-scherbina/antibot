@@ -7,42 +7,38 @@ class AntibotTest extends AnyFunSuite with AntibotSuite {
 
   test("sanity check") {
 
-    var bots = Map[String, List[Long]]()
+    var bots = Map[String, List[(Long, Boolean)]]()
       .withDefaultValue(List())
 
-    Prop.forAll(clicks) { case (ip, times) =>
+    def bot(ip: String, times: Port) = {
       println(s"$ip clicks $times times ...")
-      for (n <- 1 to times) {
-        if (n <= 20) click(ip) else
-          bots = bots.updated(ip,
-            click(ip) :: bots(ip))
-      }
-      Thread.sleep(100)
+      for (n <- 1 to times) bots = bots.updated(ip,
+        click(ip) -> (times >= 20) :: bots(ip))
       true
-    } check
-
-    println("Bots:")
-    bots.foreach(println)
-    println()
-
-    waitStreams(AntiBot.botsDetectorQueryName)
-    waitStreams(AntiBot.eventsOutputQueryName)
-    Thread.sleep(1000)
-
-    val res = cassandra.withSessionDo { cass =>
-      bots.forall {
-        case (ip, event_times) => event_times.forall(event_time =>
-          showFail(s"$ip $event_time", cass.execute(
-            s"""
-               |select is_bot from antibot.events
-               | where ip = '$ip' and event_time = $event_time
-               | and is_bot = true allow filtering
-               |""".stripMargin).iterator().hasNext)
-        )
-      }
     }
 
-    assert(res)
+    Prop.forAll(clicks)(Function.tupled(bot)) check
 
+    println(s"Bots:\n${bots.mkString("\n")}\n")
+
+    waitStreams()
+
+    assert {
+      cassandra.withSessionDo { cass =>
+        bots.forall {
+          case (ip, event_times) => event_times.forall {
+            case (event_time, is_bot) =>
+              showFail(s"$ip $event_time $is_bot", cass.execute(
+                s"""
+                   |select is_bot from antibot.events
+                   | where ip = '$ip' and event_time = $event_time
+                   | and is_bot = $is_bot allow filtering
+                   |""".stripMargin
+              ).iterator().hasNext)
+          }
+        }
+      }
+    }
   }
+
 }

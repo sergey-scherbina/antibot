@@ -1,19 +1,17 @@
 package antibot
 
+import antibot.Config._
+import antibot.DataFormat._
+import com.datastax.driver.core.utils.UUIDs
 import org.apache.spark.sql._
+import org.apache.spark.sql.cassandra._
+import org.apache.spark.sql.functions._
 import org.apache.spark.sql.streaming._
 import org.apache.spark.sql.types._
-import org.apache.spark.sql.functions._
-import org.apache.spark.sql.cassandra._
-import DataFormat._
-import Config._
-import com.datastax.driver.core.utils.UUIDs
-import scala.concurrent.duration._
 
 object AntiBot {
 
-  val botsDetectorQueryName = "bots.detector"
-  val eventsOutputQueryName = "events.output"
+  val queryName = getClass.getCanonicalName
 
   val eventStruct = structType(
     "type" -> StringType,
@@ -22,73 +20,75 @@ object AntiBot {
     "url" -> StringType
   )
 
-  val botsStruct = structType(
+  val redisSchema = structType(
     "ip" -> StringType,
-    "count" -> IntegerType,
-    "start" -> IntegerType,
-    "end" -> IntegerType
+    "count" -> IntegerType
   )
+
+  def readRedis(spark: SparkSession, schema: StructType = redisSchema) =
+    config.redis.read(spark).schema(schema).load()
+
+  def writeRedis(d: DataFrame) = Function.const(d) {
+    config.redis(d.write.mode(SaveMode.Overwrite)).save()
+  }
+
+  def debug(n: Long, s: String, d: DataFrame) = Function.const(d) {
+    println(s"$s#$n:${d.columns.mkString(", ")}\n" +
+      d.collect().map(r => s"$s#$n:$r").mkString("\n"))
+  }
 
   val timeUUID = udf(() => UUIDs.timeBased().toString)
 
-  def readRedis(spark: SparkSession) =
-    config.redis.read(spark).schema(botsStruct).load()
-
-  def debugDump(s: String, d: DataFrame) =
-    println(d.collect().map(r => s"$s:$r").mkString("\n"))
-
   def main(args: Array[String] = Array()): Unit = {
-    println(s"Started AntiBot with config: $config")
+    println(s"Starting AntiBot with config: $config")
 
     val spark = config.redis(SparkSession.builder
       .appName("AntiBot")).getOrCreate()
-
     spark.sparkContext.setLogLevel("ERROR")
-
     import spark.implicits._
 
-    readRedis(spark) // warm up redis, seems like it's essential
-
-    val events = config.kafka(spark.readStream).load()
+    config.kafka(spark.readStream).load()
       .select(from_json($"value".cast(DataTypes.StringType), eventStruct).as("e"))
       .na.drop("any").where($"e.type" === "click")
-      .select($"e.ip", $"e.url", $"e.event_time"
-        , to_timestamp(from_unixtime($"e.event_time")).as("event_ts")
-      ).withWatermark("event_ts", "10 minutes")
-
-    //    events.writeStream.foreachBatch((d, _) => debugDump("k", d))
-    //      .queryName("events.input").start()
-
-    events.groupBy($"ip", window($"event_ts",
-      "10 seconds", "1 second"))
-      .count().where($"count" > 20)
-      //.withWatermark("window", "10 minutes")
-      .select($"ip", $"count",
-        unix_timestamp($"window.start").as("start"),
-        unix_timestamp($"window.end").as("end")
-      ).writeStream.outputMode(OutputMode.Complete())
-      .trigger(Trigger.ProcessingTime(0))
-      .foreachBatch { (b: DataFrame, n: Long) =>
-        config.redis(b.write.mode(SaveMode.Overwrite)).save()
-        debugDump("r", b)
-      } queryName botsDetectorQueryName start()
-
-    events.writeStream.outputMode(OutputMode.Append())
-      .trigger(Trigger.ProcessingTime(10 seconds))
+      .select($"e.type", $"e.ip", $"e.url", $"e.event_time", timeUUID().as("time_uuid"),
+        to_timestamp(from_unixtime($"e.event_time")).as("event_ts"))
+      .withWatermark("event_ts", "10 minutes")
+      .writeStream.outputMode(OutputMode.Append())
+      .trigger(Trigger.ProcessingTime(1000))
       .foreachBatch { (e: DataFrame, n: Long) =>
-        val b = readRedis(spark)
-        val r = e.join(b, e("ip") === b("ip"), "left")
-          .select(e("ip"), e("event_time"), e("url"),
-            b("count").isNotNull.as("is_bot"),
-            lit("click").as("type"),
-            timeUUID().as("time_uuid")
-          )
-        r.write.mode(SaveMode.Append)
-          .cassandraFormat(config.cassandra.table,
-            config.cassandra.keyspace)
+        println(s"Batch #$n started")
+
+        val g = e.groupBy($"ip", window($"event_ts",
+          "10 seconds", "1 second"))
+          .count().groupBy("ip")
+          .agg(max($"count").as("count"))
+
+        val r = g.as("g").join(readRedis(spark).as("r"),
+          $"g.ip" === $"r.ip", "full")
+          .select(coalesce($"g.ip", $"r.ip").as("ip"),
+            coalesce($"r.count", lit(0)).as("r_count"),
+            coalesce($"g.count", lit(0)).as("g_count"))
+          .select($"ip", ($"r_count" + $"g_count").as("count"))
+
+        writeRedis(r)
+        debug(n, "r", r)
+
+        val c = e.as("e").join(r
+          .where($"count" >= 20).as("r"),
+          $"e.ip" === $"r.ip", "left")
+          .select(e("type"), e("ip"), e("event_time"),
+            $"r.count".isNotNull.as("is_bot"),
+            e("time_uuid"), e("url"))
+
+        c.write.mode(SaveMode.Append)
+          .cassandraFormat(config.cassandra.table, config.cassandra.keyspace)
           .save()
-        debugDump("c", r)
-      } queryName eventsOutputQueryName start()
+
+        debug(n, "c", c)
+
+        println(s"Batch #$n complete")
+
+      } queryName queryName start()
 
     spark.streams.awaitAnyTermination()
   }
