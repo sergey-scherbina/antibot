@@ -58,33 +58,33 @@ object AntiBot {
       .foreachBatch { (e: DataFrame, n: Long) =>
         println(s"Batch #$n started")
 
+        val r = spark.createDataFrame(spark.sparkContext
+          .parallelize(readRedis(spark).collect()), redisSchema)
+
         val g = e.groupBy($"ip", window($"event_ts",
           "10 seconds", "1 second"))
           .count().groupBy("ip")
           .agg(max($"count").as("count"))
 
-        val r = g.as("g").join(readRedis(spark).as("r"),
+        val b = g.as("g").join(r.as("r"),
           $"g.ip" === $"r.ip", "full")
           .select(coalesce($"g.ip", $"r.ip").as("ip"),
             coalesce($"r.count", lit(0)).as("r_count"),
             coalesce($"g.count", lit(0)).as("g_count"))
           .select($"ip", ($"r_count" + $"g_count").as("count"))
 
-        writeRedis(r)
-        debug(n, "r", r)
+        writeRedis(b)
 
-        val c = e.as("e").join(r
-          .where($"count" >= 20).as("r"),
+        val c = e.as("e").join(b
+          .where($"count" >= 20).as("b"),
           $"e.ip" === $"r.ip", "left")
           .select(e("type"), e("ip"), e("event_time"),
-            $"r.count".isNotNull.as("is_bot"),
+            $"b.count".isNotNull.as("is_bot"),
             e("time_uuid"), e("url"))
 
         c.write.mode(SaveMode.Append)
           .cassandraFormat(config.cassandra.table, config.cassandra.keyspace)
           .save()
-
-        debug(n, "c", c)
 
         println(s"Batch #$n complete")
 
