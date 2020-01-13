@@ -26,7 +26,10 @@ object AntiBot {
   )
 
   def readRedis(spark: SparkSession, schema: StructType = redisSchema) =
-    config.redis.read(spark).schema(schema).load()
+  // ugly hack for ugly bug in redis-spark
+    spark.createDataFrame(spark.sparkContext.parallelize(
+      config.redis.read(spark).schema(schema).load().collect()), redisSchema)
+
 
   def writeRedis(d: DataFrame) = Function.const(d) {
     config.redis(d.write.mode(SaveMode.Overwrite)).save()
@@ -48,45 +51,37 @@ object AntiBot {
     import spark.implicits._
 
     config.kafka(spark.readStream).load()
-      .select(from_json($"value".cast(DataTypes.StringType), eventStruct).as("e"))
+      .select(from_json($"value".cast(DataTypes.StringType),
+        eventStruct).as("e"))
       .na.drop("any").where($"e.type" === "click")
-      .select($"e.type", $"e.ip", $"e.url", $"e.event_time", timeUUID().as("time_uuid"),
-        to_timestamp(from_unixtime($"e.event_time")).as("event_ts"))
+      .select($"e.type", $"e.ip", $"e.url", $"e.event_time",
+        timeUUID().as("time_uuid"),
+        to_timestamp(from_unixtime($"e.event_time"))
+          .as("event_ts"))
       .withWatermark("event_ts", "10 minutes")
       .writeStream.outputMode(OutputMode.Append())
       .trigger(Trigger.ProcessingTime(1000))
       .foreachBatch { (e: DataFrame, n: Long) =>
-        println(s"Batch #$n started")
-
-        // ugly hack for ugly bug in redis-spark
-        val r = spark.createDataFrame(spark.sparkContext
-          .parallelize(readRedis(spark).collect()), redisSchema)
-
-        val b = e.groupBy($"ip", window($"event_ts",
-          "10 seconds", "1 second"))
-          .count().groupBy("ip")
-          .agg(max($"count").as("count"))
-          .as("g").join(r.as("r"),
-          $"g.ip" === $"r.ip", "full")
-          .select(coalesce($"g.ip", $"r.ip").as("ip"),
-            coalesce($"r.count", lit(0)).as("r_count"),
-            coalesce($"g.count", lit(0)).as("g_count"))
-          .select($"ip", ($"r_count" + $"g_count").as("count"))
-
-        writeRedis(b)
-
-        e.as("e").join(b
+        e.as("e").join(writeRedis(
+          e.groupBy($"ip", window($"event_ts",
+            "10 seconds", "1 second"))
+            .count().groupBy("ip")
+            .agg(max($"count").as("count"))
+            .as("g").join(readRedis(spark).as("r"),
+            $"g.ip" === $"r.ip", "full")
+            .select(coalesce($"g.ip", $"r.ip").as("ip"),
+              (coalesce($"r.count", lit(0)) +
+                coalesce($"g.count", lit(0)))
+                .as("count")))
           .where($"count" >= 20).as("b"),
           $"e.ip" === $"b.ip", "left")
           .select(e("type"), e("ip"), e("event_time"),
             $"b.count".isNotNull.as("is_bot"),
             e("time_uuid"), e("url"))
           .write.mode(SaveMode.Append)
-          .cassandraFormat(config.cassandra.table, config.cassandra.keyspace)
+          .cassandraFormat(config.cassandra.table,
+            config.cassandra.keyspace)
           .save()
-
-        println(s"Batch #$n complete")
-
       } queryName queryName start()
 
     spark.streams.awaitAnyTermination()
