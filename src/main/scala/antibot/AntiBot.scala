@@ -62,12 +62,11 @@ object AntiBot {
         val r = spark.createDataFrame(spark.sparkContext
           .parallelize(readRedis(spark).collect()), redisSchema)
 
-        val g = e.groupBy($"ip", window($"event_ts",
+        val b = e.groupBy($"ip", window($"event_ts",
           "10 seconds", "1 second"))
           .count().groupBy("ip")
           .agg(max($"count").as("count"))
-
-        val b = g.as("g").join(r.as("r"),
+          .as("g").join(r.as("r"),
           $"g.ip" === $"r.ip", "full")
           .select(coalesce($"g.ip", $"r.ip").as("ip"),
             coalesce($"r.count", lit(0)).as("r_count"),
@@ -76,14 +75,13 @@ object AntiBot {
 
         writeRedis(b)
 
-        val c = e.as("e").join(b
+        e.as("e").join(b
           .where($"count" >= 20).as("b"),
           $"e.ip" === $"b.ip", "left")
           .select(e("type"), e("ip"), e("event_time"),
             $"b.count".isNotNull.as("is_bot"),
             e("time_uuid"), e("url"))
-
-        c.write.mode(SaveMode.Append)
+          .write.mode(SaveMode.Append)
           .cassandraFormat(config.cassandra.table, config.cassandra.keyspace)
           .save()
 
