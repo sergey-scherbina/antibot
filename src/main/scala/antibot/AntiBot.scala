@@ -70,12 +70,9 @@ object AntiBot {
             "10 seconds", "1 second"))
             .count().groupBy("ip")
             .agg(max($"count").as("count"))
-            .as("g").join(readRedis(spark).as("r"),
-            $"g.ip" === $"r.ip", "full")
-            .select(coalesce($"g.ip", $"r.ip").as("ip"),
-              (coalesce($"r.count", lit(0)) +
-                coalesce($"g.count", lit(0)))
-                .as("count"))
+            .unionByName(readRedis(spark))
+            .groupBy("ip")
+            .agg(sum($"count").as("count"))
         })
 
         val cassData = trace(n, "output",
