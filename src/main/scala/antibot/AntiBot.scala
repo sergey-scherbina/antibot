@@ -27,11 +27,17 @@ object AntiBot {
     "event_time" -> IntegerType
   )
 
-  def readRedis(spark: SparkSession, schema: StructType = redisSchema) =
-  // ugly hack for ugly bug in redis-spark
-    spark.createDataFrame(spark.sparkContext.parallelize(
-      config.redis.read(spark).schema(schema).load()
-        .collect()), redisSchema)
+  def readRedis(spark: SparkSession, schema: StructType = redisSchema) = {
+    import spark.implicits._
+
+    val r = config.redis.read(spark).schema(schema).load()
+      .where($"event_time" > (unix_timestamp() -
+        config.threshold.expire.toSeconds))
+
+    // ugly hack for ugly bug in redis-spark
+    spark.createDataFrame(spark.sparkContext
+      .parallelize(r.collect()), redisSchema)
+  }
 
 
   def writeRedis(d: DataFrame) = Function.const(d) {
@@ -76,8 +82,7 @@ object AntiBot {
             .sort($"count").groupBy("ip")
             .agg(max($"count").as("count"),
               last("event_time").as("event_time"))
-            .unionByName(readRedis(spark).where($"event_time" >
-              (unix_timestamp() - config.threshold.expire.toSeconds)))
+            .unionByName(readRedis(spark))
             .groupBy("ip").agg(sum($"count").as("count"),
             max("event_time").as("event_time"))
         })
