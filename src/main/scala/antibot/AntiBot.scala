@@ -23,7 +23,8 @@ object AntiBot {
 
   val redisSchema = structType(
     "ip" -> StringType,
-    "count" -> IntegerType
+    "count" -> IntegerType,
+    "event_time" -> IntegerType
   )
 
   def readRedis(spark: SparkSession, schema: StructType = redisSchema) =
@@ -38,8 +39,8 @@ object AntiBot {
   }
 
   def trace(n: Long, s: String, d: DataFrame) = Function.const(d) {
-    logger.trace(s"$s#$n:${d.columns.mkString(", ")}")
-    d.foreach(r => logger.trace(s"$s#$n:$r"))
+    logger.trace(s"$s($n): ${d.columns.mkString(", ")}")
+    d.foreach(r => logger.trace(s"$s($n): $r"))
   }
 
   val timeUUID = udf(() => UUIDs.timeBased().toString)
@@ -56,23 +57,27 @@ object AntiBot {
       .select(from_json($"value".cast(DataTypes.StringType),
         eventStruct).as("e"))
       .na.drop("any").where($"e.type" === "click")
-      .select($"e.type", $"e.ip", $"e.url", $"e.event_time",
-        timeUUID().as("time_uuid"),
-        to_timestamp(from_unixtime($"e.event_time"))
-          .as("event_ts"))
-      .withWatermark("event_ts", "10 minutes")
+      .select($"e.type", $"e.ip", $"e.url",
+        $"e.event_time".cast(IntegerType).as("event_time"),
+        to_timestamp(from_unixtime($"e.event_time")).as("time"),
+        timeUUID().as("time_uuid"))
+      .withWatermark("time", "10 minutes")
       .writeStream.outputMode(OutputMode.Append())
       .trigger(Trigger.ProcessingTime(1000))
       .foreachBatch { (e: DataFrame, n: Long) =>
 
         val redisData = trace(n, "cache", writeRedis {
-          e.groupBy($"ip", window($"event_ts",
+          e.groupBy($"ip", window($"time",
             "10 seconds", "1 second"))
-            .count().groupBy("ip")
-            .agg(max($"count").as("count"))
-            .unionByName(readRedis(spark))
-            .groupBy("ip")
-            .agg(sum($"count").as("count"))
+            .agg(count("*").as("count"),
+              max("event_time").as("event_time"))
+            .sort($"count").groupBy("ip")
+            .agg(max($"count").as("count"),
+              last("event_time").as("event_time"))
+            .unionByName(readRedis(spark).where(
+              $"event_time" > (unix_timestamp() - (10 * 60 * 60))))
+            .groupBy("ip").agg(sum($"count").as("count"),
+            max("event_time").as("event_time"))
         })
 
         val cassData = trace(n, "output",
