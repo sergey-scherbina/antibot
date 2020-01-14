@@ -40,8 +40,8 @@ trait AntibotSuite extends Suite with BeforeAndAfterAll with SparkTemplate
       |create table if not exists antibot.events(
       |  "type" text,
       |  ip inet,
-      |  is_bot boolean,
       |  event_time int,
+      |  is_bot boolean,
       |  url text,
       |  time_uuid timeuuid,
       |  primary key ((ip, event_time), time_uuid)

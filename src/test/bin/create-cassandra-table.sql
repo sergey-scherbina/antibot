@@ -4,8 +4,9 @@ create keyspace if not exists antibot with replication = {
 create table if not exists antibot.events(
   "type" text,
   ip inet,
+  event_time int,
   is_bot boolean,
-  event_time timestamp,
   url text,
-  primary key (ip, event_time, url)
+  time_uuid timeuuid,
+  primary key ((ip, event_time), time_uuid)
 );

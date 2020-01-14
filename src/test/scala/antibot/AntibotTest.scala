@@ -23,7 +23,7 @@ class AntibotTest extends AnyFunSuite with AntibotSuite {
 
     Prop.forAll(clicks)(Function.tupled(bot)) check
 
-    logger.trace(s"Bots:\n${bots.mkString("\n")}\n")
+    logger.trace(s"Clicks:\n${bots.mkString("\n")}\n")
 
     waitStreams()
 
