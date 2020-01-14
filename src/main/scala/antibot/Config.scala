@@ -5,15 +5,22 @@ import pureconfig.generic.auto._
 import DataFormat._
 import org.apache.spark.sql.SparkSession
 
+import scala.concurrent.duration._
+
 object Config {
+  val defaultThreshold = Threshold(10 seconds, 1 second, 20, 10 minutes)
+
   lazy val config = ConfigSource.default.load[Config]
     .left.map(System.err.println)
     .left.map(_ => System.exit(1))
     .right.get
 
-  case class Config(kafka: KafkaConf, cassandra: CassandraConf, redis: RedisConf) {
+  case class Config(kafka: KafkaConf, cassandra: CassandraConf, redis: RedisConf,
+                    threshold: Threshold = defaultThreshold) {
     override def toString: String = ConfigWriter[Config].to(this).unwrapped().toString
   }
+
+  case class Threshold(window: Duration, slide: Duration, count: Int, expire: Duration)
 
   case class KafkaConf(brokers: String, topic: String) {
     def apply[F: DataFormat](f: F) = f.kafkaFormat(brokers, topic)

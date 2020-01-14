@@ -61,28 +61,30 @@ object AntiBot {
         $"e.event_time".cast(IntegerType).as("event_time"),
         to_timestamp(from_unixtime($"e.event_time")).as("time"),
         timeUUID().as("time_uuid"))
-      .withWatermark("time", "10 minutes")
+      .withWatermark("time", config.threshold.expire.toMillis + " millisecond")
       .writeStream.outputMode(OutputMode.Append())
-      .trigger(Trigger.ProcessingTime(1000))
+      .trigger(Trigger.ProcessingTime(config.threshold.slide.toMillis))
       .foreachBatch { (e: DataFrame, n: Long) =>
+        logger.trace(s"started batch #$n")
 
         val redisData = trace(n, "cache", writeRedis {
           e.groupBy($"ip", window($"time",
-            "10 seconds", "1 second"))
+            config.threshold.window.toMillis + " millisecond",
+            config.threshold.slide.toMillis + " millisecond"))
             .agg(count("*").as("count"),
               max("event_time").as("event_time"))
             .sort($"count").groupBy("ip")
             .agg(max($"count").as("count"),
               last("event_time").as("event_time"))
-            .unionByName(readRedis(spark).where(
-              $"event_time" > (unix_timestamp() - (10 * 60 * 60))))
+            .unionByName(readRedis(spark).where($"event_time" >
+              (unix_timestamp() - config.threshold.expire.toSeconds)))
             .groupBy("ip").agg(sum($"count").as("count"),
             max("event_time").as("event_time"))
         })
 
         val cassData = trace(n, "output",
-          e.as("e").join(redisData
-            .where($"count" >= 20).as("b"),
+          e.as("e").join(redisData.where(
+            $"count" >= config.threshold.count).as("b"),
             $"e.ip" === $"b.ip", "left")
             .select(e("type"), e("ip"), e("event_time"),
               $"b.count".isNotNull.as("is_bot"),
@@ -92,6 +94,8 @@ object AntiBot {
           .cassandraFormat(config.cassandra.table,
             config.cassandra.keyspace)
           .save()
+
+        logger.trace(s"finished batch #$n")
 
       } queryName queryName start()
 

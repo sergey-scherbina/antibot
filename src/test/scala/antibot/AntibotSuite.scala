@@ -22,7 +22,7 @@ import scala.util._
 trait AntibotSuite extends Suite with BeforeAndAfterAll with SparkTemplate
   with EmbeddedCassandra with EmbeddedRedis with EmbeddedKafka {
 
-  val THRESHOLD = 20
+  lazy val THRESHOLD = Config.config.threshold
 
   val logger = LoggerFactory.getLogger(this.getClass)
 
@@ -63,7 +63,7 @@ trait AntibotSuite extends Suite with BeforeAndAfterAll with SparkTemplate
 
   val octet = Gen.choose(1, 255)
   val IP = for {x1 <- octet; x2 <- octet; x3 <- octet; x4 <- octet} yield s"$x1.$x2.$x3.$x4"
-  val clicks = for {ip <- IP; n <- Gen.choose(1, 30)} yield ip -> n
+  val clicks = for {ip <- IP; n <- Gen.choose(1, THRESHOLD.count * 2)} yield ip -> n
 
   def timestamp() = System.currentTimeMillis() / 1000
 

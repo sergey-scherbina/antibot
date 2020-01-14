@@ -11,12 +11,13 @@ class AntibotTest extends AnyFunSuite with AntibotSuite {
       .withDefaultValue(List())
 
     def bot(ip: String, times: Port) = {
-      logger.trace(s"$ip clicks $times times ...")
+      val isBot = times >= THRESHOLD.count
+      logger.trace(s"$ip clicks $times times (${
+        if (isBot) "bot" else "not bot"
+      })")
       for (n <- 1 to times)
-        if (times >= THRESHOLD && n <= THRESHOLD)
-          click(ip)
-        else bots = bots.updated(ip,
-          click(ip) -> (times >= THRESHOLD) :: bots(ip))
+        if (isBot && n <= THRESHOLD.count) click(ip)
+        else bots = bots.updated(ip, click(ip) -> isBot :: bots(ip))
       true
     }
 
