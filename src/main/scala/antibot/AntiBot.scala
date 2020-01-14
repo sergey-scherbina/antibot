@@ -30,13 +30,13 @@ object AntiBot {
   def readCache(spark: SparkSession, schema: StructType = cacheSchema) = {
     import spark.implicits._
 
-    val r = config.redis.read(spark).schema(schema).load()
+    val c = config.redis(spark.read).schema(schema).load()
       .where($"event_time" > (unix_timestamp() -
         config.threshold.expire.toSeconds))
 
     // ugly hack for ugly bug in redis-spark
     spark.createDataFrame(spark.sparkContext
-      .parallelize(r.collect()), schema)
+      .parallelize(c.collect()), schema)
   }
 
   def writeCache(d: DataFrame) = Function.const(d) {
@@ -53,8 +53,8 @@ object AntiBot {
   def main(args: Array[String] = Array()): Unit = {
     logger.info(s"Starting AntiBot with config: $config")
 
-    val spark = config.redis(SparkSession.builder
-      .appName("AntiBot")).getOrCreate()
+    val spark = config(SparkSession.builder)
+      .appName("AntiBot").getOrCreate()
     spark.sparkContext.setLogLevel("ERROR")
     import spark.implicits._
 
@@ -98,7 +98,8 @@ object AntiBot {
 
         logger.trace(s"finished batch #$n")
 
-      } queryName queryName start()
+      } queryName queryName option
+      ("checkpointLocation", config.checkpointLocation) start()
 
     spark.streams.awaitAnyTermination()
     logger.info(s"Stopped AntiBot")

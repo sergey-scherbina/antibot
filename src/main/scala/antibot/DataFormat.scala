@@ -23,16 +23,17 @@ object DataFormat {
 
     import redis._
 
-    def redisFormat(table: String, key: String, ttl: Int) =
+    def redisFormat(table: String, key: String, ttl: Long) =
       f.format(RedisFormat)
         .option(SqlOptionTableName, table)
-        .option(SqlOptionKeyColumn, "ip")
+        .option(SqlOptionKeyColumn, key)
         .option(SqlOptionTTL, s"$ttl")
 
-    def kafkaFormat(brokers: String, topic: String) =
+    def kafkaFormat(brokers: String, topic: String, failOnDataLoss: Boolean = true) =
       f.format("kafka")
         .option("kafka.bootstrap.servers", brokers)
         .option("subscribe", topic)
+        .option("failOnDataLoss", s"$failOnDataLoss")
   }
 
   implicit object reader extends DataFormat[DataFrameReader] {

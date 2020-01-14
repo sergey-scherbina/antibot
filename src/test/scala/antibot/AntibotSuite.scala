@@ -23,15 +23,15 @@ trait AntibotSuite extends Suite with BeforeAndAfterAll with SparkTemplate
   with EmbeddedCassandra with EmbeddedRedis with EmbeddedKafka {
 
   lazy val THRESHOLD = Config.config.threshold
+  lazy val TOPIC = Config.config.kafka.topic
 
   val logger = LoggerFactory.getLogger(this.getClass)
 
   override def clearCache(): Unit = CassandraConnector.evictCache()
   System.setProperty("baseDir", ".") // for embedded cassandra ports directory
 
-  val clickTopic = "click"
 
-  val initCassandra = Seq(
+  val initDb = Seq(
     """
       |create keyspace if not exists antibot
       | with replication = {'class' : 'SimpleStrategy',
@@ -70,25 +70,30 @@ trait AntibotSuite extends Suite with BeforeAndAfterAll with SparkTemplate
   def click(ip: String, rand: Boolean = false) = {
     val event_time = timestamp() + (if (rand) Random.nextInt(10) *
       (if (Random.nextBoolean()) 1 else -1) else 0)
-    publishStringMessageToKafka(clickTopic,
-      s"""{"type": "$clickTopic", "ip": "${ip}", "event_time": "$event_time",
+    publishStringMessageToKafka(TOPIC,
+      s"""{"type": "click", "ip": "${ip}", "event_time": "$event_time",
          | "url": "https://blog.griddynamics.com/in-stream-processing-service-blueprint"}"""
         .stripMargin)
     event_time
   }
 
+  def setProperties(redisPort: Int, kafkaPort: Int, kafkaTopic: String): Unit = {
+  }
 
   override protected def beforeAll(): Unit = {
     showPorts()
     logger.trace("===--- Starting Antibot ... ---===")
     Try {
-      Config.setProperties(redis.ports().get(0),
-        implicitly[EmbeddedKafkaConfig].kafkaPort, clickTopic)
+      System.setProperty("redis.port", s"${redis.ports().get(0)}")
+      System.setProperty("kafka.brokers",
+        s"localhost:${implicitly[EmbeddedKafkaConfig].kafkaPort}")
+      System.setProperty("kafka.fail-on-data-loss", "false")
+      System.setProperty("checkpoint-location", "target/checkpoint")
       useCassandraConfig(Seq(YamlTransformations.Default))
       useSparkConf(sparkConf)
       redis.start()
-      createCustomTopic(clickTopic)
-      cassandra.withSessionDo(cass => initCassandra.foreach(cass.execute))
+      createCustomTopic(TOPIC)
+      cassandra.withSessionDo(c => initDb.foreach(c.execute))
     }.failed.map(_.printStackTrace()).foreach(_ => sys.exit(1))
     antiBot.failed.map(_.printStackTrace()).foreach(_ => sys.exit(1))
     waitStreams()

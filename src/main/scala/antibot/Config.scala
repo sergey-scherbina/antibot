@@ -8,38 +8,38 @@ import org.apache.spark.sql.SparkSession
 import scala.concurrent.duration._
 
 object Config {
-  val defaultThreshold = Threshold(10 seconds, 1 second, 20, 10 minutes)
 
   lazy val config = ConfigSource.default.load[Config]
     .left.map(System.err.println)
     .left.map(_ => System.exit(1))
     .right.get
 
-  case class Config(kafka: KafkaConf, cassandra: CassandraConf, redis: RedisConf,
-                    threshold: Threshold = defaultThreshold) {
+  case class Config(kafka: KafkaConf = KafkaConf(), cassandra: CassandraConf = CassandraConf(),
+                    redis: RedisConf = RedisConf(), threshold: Threshold = Threshold(),
+                    checkpointLocation: String = "/tmp/antibot") {
     override def toString: String = ConfigWriter[Config].to(this).unwrapped().toString
-  }
-
-  case class Threshold(window: Duration, slide: Duration, count: Int, expire: Duration)
-
-  case class KafkaConf(brokers: String, topic: String) {
-    def apply[F: DataFormat](f: F) = f.kafkaFormat(brokers, topic)
-  }
-
-  case class CassandraConf(keyspace: String, table: String)
-
-  case class RedisConf(host: String, port: String, table: String, key: String, ttl: Int) {
-    def apply[F: DataFormat](f: F) = f.redisFormat(table, key, ttl)
-    def read(spark: SparkSession) = apply(spark.read)
     def apply(b: SparkSession.Builder) = b
-      .config("spark.redis.host", config.redis.host)
-      .config("spark.redis.port", config.redis.port)
+      .config("spark.cassandra.connection.host", cassandra.host)
+      .config("spark.cassandra.connection.port", cassandra.port)
+      .config("spark.redis.host", redis.host)
+      .config("spark.redis.port", redis.port)
       .config("spark.redis.timeout", "30000")
   }
 
-  def setProperties(redisPort: Int, kafkaPort: Int, kafkaTopic: String): Unit = {
-    System.setProperty("redis.port", s"$redisPort")
-    System.setProperty("kafka.brokers", s"localhost:$kafkaPort")
-    System.setProperty("kafka.topic", kafkaTopic)
+  case class Threshold(count: Int = 20, window: Duration = 10 seconds,
+                       slide: Duration = 1 second, expire: Duration = 10 minutes)
+
+  case class KafkaConf(brokers: String = "localhost:9092", topic: String = "events",
+                       failOnDataLoss: Boolean = true) {
+    def apply[F: DataFormat](f: F) = f.kafkaFormat(brokers, topic, failOnDataLoss)
   }
+
+  case class CassandraConf(host: String = "localhost", port: Int = 9042,
+                           keyspace: String = "antibot", table: String = "events")
+
+  case class RedisConf(host: String = "localhost", port: Int = 6379,
+                       table: String = "events", ttl: Duration = 10 minutes) {
+    def apply[F: DataFormat](f: F) = f.redisFormat(table, "ip", ttl.toSeconds)
+  }
+
 }
