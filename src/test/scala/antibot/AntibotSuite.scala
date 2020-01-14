@@ -22,6 +22,8 @@ import scala.util._
 trait AntibotSuite extends Suite with BeforeAndAfterAll with SparkTemplate
   with EmbeddedCassandra with EmbeddedRedis with EmbeddedKafka {
 
+  val THRESHOLD = 20
+
   val logger = LoggerFactory.getLogger(this.getClass)
 
   override def clearCache(): Unit = CassandraConnector.evictCache()
