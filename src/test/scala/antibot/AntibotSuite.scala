@@ -10,6 +10,7 @@ import net.manub.embeddedkafka._
 import org.apache.spark.sql.streaming._
 import org.scalacheck._
 import org.scalatest._
+import org.slf4j.LoggerFactory
 import redis.embedded.RedisServer
 
 import scala.annotation.tailrec
@@ -20,6 +21,9 @@ import scala.util._
 
 trait AntibotSuite extends Suite with BeforeAndAfterAll with SparkTemplate
   with EmbeddedCassandra with EmbeddedRedis with EmbeddedKafka {
+
+  val logger = LoggerFactory.getLogger(this.getClass)
+
   override def clearCache(): Unit = CassandraConnector.evictCache()
   System.setProperty("baseDir", ".") // for embedded cassandra ports directory
 
@@ -74,7 +78,7 @@ trait AntibotSuite extends Suite with BeforeAndAfterAll with SparkTemplate
 
   override protected def beforeAll(): Unit = {
     showPorts()
-    println("===--- Starting Antibot ... ---===")
+    logger.trace("===--- Starting Antibot ... ---===")
     Try {
       Config.setProperties(redis.ports().get(0),
         implicitly[EmbeddedKafkaConfig].kafkaPort, clickTopic)
@@ -86,25 +90,25 @@ trait AntibotSuite extends Suite with BeforeAndAfterAll with SparkTemplate
     }.failed.map(_.printStackTrace()).foreach(_ => sys.exit(1))
     antiBot.failed.map(_.printStackTrace()).foreach(_ => sys.exit(1))
     waitStreams()
-    println("===--- ... Antibot started! ---===")
+    logger.trace("===--- ... Antibot started! ---===")
   }
 
   override protected def afterAll(): Unit = {
-    println("===--- Stopping Antibot ... ---===")
+    logger.trace("===--- Stopping Antibot ... ---===")
     Try(Await.ready(antiBot, 5 second))
     stopRedis(redis)
     kafka.stop(true)
-    println("===--- ... Antibot stopped! ---===")
+    logger.trace("===--- ... Antibot stopped! ---===")
   }
 
   def waitStreams(queryName: String = AntiBot.queryName, time: Duration = Duration.Inf) = {
-    println(s"Waiting stream: $queryName ...")
+    logger.trace(s"Waiting stream: $queryName ...")
     val latch = Promise[Unit]()
     sparkSession.streams.addListener(new StreamingQueryListener {
       override def onQueryStarted(event: StreamingQueryListener.QueryStartedEvent): Unit = ()
       override def onQueryTerminated(event: StreamingQueryListener.QueryTerminatedEvent): Unit = ()
       private def unlock(): Unit = {
-        println(s"Stream $queryName complete")
+        logger.trace(s"Stream $queryName complete")
         sparkSession.streams.removeListener(this)
         if (!latch.isCompleted) latch.success()
       }

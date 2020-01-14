@@ -11,15 +11,16 @@ class AntibotTest extends AnyFunSuite with AntibotSuite {
       .withDefaultValue(List())
 
     def bot(ip: String, times: Port) = {
-      println(s"$ip clicks $times times ...")
-      for (n <- 1 to times) bots = bots.updated(ip,
-        click(ip) -> (times >= 20) :: bots(ip))
+      logger.trace(s"$ip clicks $times times ...")
+      for (n <- 1 to times)
+        bots = bots.updated(ip,
+          click(ip) -> (times >= 20) :: bots(ip))
       true
     }
 
     Prop.forAll(clicks)(Function.tupled(bot)) check
 
-    println(s"Bots:\n${bots.mkString("\n")}\n")
+    logger.trace(s"Bots:\n${bots.mkString("\n")}\n")
 
     waitStreams()
 
