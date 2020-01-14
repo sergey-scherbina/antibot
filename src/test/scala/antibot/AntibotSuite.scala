@@ -137,10 +137,10 @@ trait AntibotSuite extends Suite with BeforeAndAfterAll with SparkTemplate
     }
 
   def showPorts(): Unit = {
-    println(s"Cassandra port : ${cassandra.port}")
-    println(s"Zookeeper port : ${kafka.config.zooKeeperPort}")
-    println(s"Kafka port : ${kafka.config.kafkaPort}")
-    println(s"Redis ports : ${redis.ports()}")
+    logger.trace(s"Cassandra port : ${cassandra.port}")
+    logger.trace(s"Zookeeper port : ${kafka.config.zooKeeperPort}")
+    logger.trace(s"Kafka port : ${kafka.config.kafkaPort}")
+    logger.trace(s"Redis ports : ${redis.ports()}")
   }
 
   def showFail(s: String, b: Boolean) = Function.const(b) {

@@ -10,6 +10,8 @@ import org.apache.spark.sql.streaming._
 import org.apache.spark.sql.types._
 import org.slf4j.LoggerFactory
 
+import scala.concurrent.duration.Duration
+
 object AntiBot {
   val queryName = this.getClass.getCanonicalName
   val logger = LoggerFactory.getLogger(this.getClass)
@@ -48,6 +50,8 @@ object AntiBot {
     d.foreach(r => logger.trace(s"$s($n): $r"))
   }
 
+  def duration(d: Duration) = s"${d.toMillis} millisecond"
+
   val timeUUID = udf(() => UUIDs.timeBased().toString)
 
   def main(args: Array[String] = Array()): Unit = {
@@ -64,7 +68,7 @@ object AntiBot {
       .select($"e.type", $"e.ip", $"e.url", $"e.event_time".cast(IntegerType),
         to_timestamp(from_unixtime($"e.event_time")).as("time"),
         timeUUID().as("time_uuid"))
-      .withWatermark("time", config.threshold.expire.toMillis + " millisecond")
+      .withWatermark("time", duration(config.threshold.expire))
       .writeStream.outputMode(OutputMode.Append())
       .trigger(Trigger.ProcessingTime(config.threshold.slide.toMillis))
       .foreachBatch { (e: DataFrame, n: Long) =>
@@ -72,8 +76,7 @@ object AntiBot {
 
         val cache = trace(n, "cache", writeCache {
           e.groupBy($"ip", window($"time",
-            config.threshold.window.toMillis + " millisecond",
-            config.threshold.slide.toMillis + " millisecond"))
+            duration(config.threshold.window), duration(config.threshold.slide)))
             .agg(count("*").as("count"),
               max("event_time").as("event_time"))
             .sort("count").groupBy("ip")
