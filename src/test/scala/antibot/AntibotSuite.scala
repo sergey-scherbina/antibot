@@ -30,7 +30,6 @@ trait AntibotSuite extends Suite with BeforeAndAfterAll with SparkTemplate
   override def clearCache(): Unit = CassandraConnector.evictCache()
   System.setProperty("baseDir", ".") // for embedded cassandra ports directory
 
-
   val initDb = Seq(
     """
       |create keyspace if not exists antibot
@@ -59,7 +58,9 @@ trait AntibotSuite extends Suite with BeforeAndAfterAll with SparkTemplate
 
   val cassandra = CassandraConnector(sparkConf)
 
-  lazy val antiBot = Future(AntiBot.main())
+  def mainArgs(): Array[String] = Array()
+
+  lazy val antiBot = Future(AntiBot.main(mainArgs()))
 
   val octet = Gen.choose(1, 255)
   val IP = for {x1 <- octet; x2 <- octet; x3 <- octet; x4 <- octet} yield s"$x1.$x2.$x3.$x4"
@@ -77,7 +78,50 @@ trait AntibotSuite extends Suite with BeforeAndAfterAll with SparkTemplate
     event_time
   }
 
-  def setProperties(redisPort: Int, kafkaPort: Int, kafkaTopic: String): Unit = {
+  var bots = Map[String, List[(Long, Boolean)]]()
+    .withDefaultValue(List())
+
+  def bot(ip: String, times: Port) = {
+    val isBot = times >= THRESHOLD.count
+    logger.trace(s"$ip clicks $times times (${
+      if (isBot) "bot" else "not bot"
+    })")
+    for (n <- 1 to times)
+      if (isBot && n <= THRESHOLD.count) click(ip)
+      else bots = bots.updated(ip, click(ip) -> isBot :: bots(ip))
+    true
+  }
+
+  def runBots() = Prop.forAll(clicks)(Function.tupled(bot)) check
+
+  def traceBots() = logger.trace(s"Clicks:\n${bots.mkString("\n")}\n")
+
+  def assertAntibot() = assert {
+    cassandra.withSessionDo { cass =>
+      bots.forall {
+        case (ip, event_times) => event_times.forall {
+          case (event_time, is_bot) =>
+            showFail(s"$ip $event_time $is_bot", cass.execute(
+              s"""
+                 |select is_bot from antibot.events
+                 | where ip = '$ip' and event_time = $event_time
+                 | and is_bot = $is_bot allow filtering
+                 |""".stripMargin
+            ).iterator().hasNext)
+        }
+      }
+    }
+  }
+
+  def beforeStart() = {}
+  def beforeAssert() = {}
+
+  def testAntibot() = {
+    beforeStart()
+    runBots()
+    traceBots()
+    beforeAssert()
+    assertAntibot()
   }
 
   override protected def beforeAll(): Unit = {
@@ -96,11 +140,11 @@ trait AntibotSuite extends Suite with BeforeAndAfterAll with SparkTemplate
       cassandra.withSessionDo(c => initDb.foreach(c.execute))
     }.failed.map(_.printStackTrace()).foreach(_ => sys.exit(1))
     antiBot.failed.map(_.printStackTrace()).foreach(_ => sys.exit(1))
-    waitStreams()
     logger.trace("===--- ... Antibot started! ---===")
   }
 
-  override protected def afterAll(): Unit = {
+  override protected def afterAll(): Unit
+  = {
     logger.trace("===--- Stopping Antibot ... ---===")
     Try(Await.ready(antiBot, 5 second))
     stopRedis(redis)
@@ -108,7 +152,7 @@ trait AntibotSuite extends Suite with BeforeAndAfterAll with SparkTemplate
     logger.trace("===--- ... Antibot stopped! ---===")
   }
 
-  def waitStreams(queryName: String = AntiBot.queryName, time: Duration = Duration.Inf) = {
+  def waitStreams(queryName: String, time: Duration = Duration.Inf) = {
     logger.trace(s"Waiting stream: $queryName ...")
     val latch = Promise[Unit]()
     sparkSession.streams.addListener(new StreamingQueryListener {
@@ -126,7 +170,8 @@ trait AntibotSuite extends Suite with BeforeAndAfterAll with SparkTemplate
   }
 
   @tailrec
-  final def freePort: Int =
+  final def freePort: Int
+  =
     Try(new ServerSocket(0)) match {
       case Success(socket) =>
         val port = socket.getLocalPort
