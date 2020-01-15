@@ -1,9 +1,12 @@
 package antibot
 
+import java.util.concurrent.atomic.AtomicBoolean
+
 import antibot.AntiBot._
 import antibot.Config._
 import antibot.DataFormat._
 import org.apache
+import org.apache.spark
 import org.apache.spark.sql._
 import org.apache.spark.sql.cassandra._
 import org.apache.spark.sql.functions._
@@ -20,8 +23,32 @@ object AntiBotSS {
     d.foreach(r => logger.trace(s"$s($n): $r"))
   }
 
+  def readCache(spark: SparkSession, schema: StructType = cacheSchema) = {
+    import spark.implicits._
+
+    val c = config.redis(spark.read).schema(schema).load()
+      .where($"event_time" > (unix_timestamp() -
+        config.threshold.expire.toSeconds))
+
+    // ugly hack for ugly bug in redis-spark
+    spark.createDataFrame(spark.sparkContext
+      .parallelize(c.collect()), schema)
+  }
+
+  def writeCache(d: DataFrame) = Function.const(d) {
+    config.redis(d.write.mode(SaveMode.Overwrite)).save()
+  }
+
+  val started = new AtomicBoolean(false)
+
+  lazy val spark = config(SparkSession.builder)
+    .appName("AntiBot")
+    .config("spark.streaming.stopGracefullyOnShutdown", "true")
+    .getOrCreate()
+
   def main(args: Array[String] = Array()): Unit = {
     logger.info(s"Starting AntiBot Structured Streaming with config: $config")
+
     import spark.implicits._
 
     config.kafka(spark.readStream).load()
@@ -66,8 +93,15 @@ object AntiBotSS {
       } queryName queryName option
       ("checkpointLocation", config.checkpointLocation) start()
 
+    started.lazySet(true)
     spark.streams.awaitAnyTermination()
     logger.info(s"Stopped AntiBot")
+  }
+
+  def stop(): Unit = {
+    if (started.get()) {
+      spark.streams.active.foreach(_.stop())
+    }
   }
 
 }

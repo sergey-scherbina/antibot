@@ -143,9 +143,11 @@ trait AntibotSuite extends Suite with BeforeAndAfterAll with SparkTemplate
     logger.trace("===--- ... Antibot started! ---===")
   }
 
-  override protected def afterAll(): Unit
-  = {
+  def stopAntibot() = {}
+
+  override protected def afterAll(): Unit = {
     logger.trace("===--- Stopping Antibot ... ---===")
+    stopAntibot()
     Try(Await.ready(antiBot, 5 second))
     stopRedis(redis)
     kafka.stop(true)
@@ -170,8 +172,7 @@ trait AntibotSuite extends Suite with BeforeAndAfterAll with SparkTemplate
   }
 
   @tailrec
-  final def freePort: Int
-  =
+  final def freePort: Int =
     Try(new ServerSocket(0)) match {
       case Success(socket) =>
         val port = socket.getLocalPort
