@@ -19,6 +19,7 @@ libraryDependencies ++= Seq(
   "org.apache.spark" %% "spark-streaming-kafka-0-10" % sparkVersion,
   "com.datastax.spark" %% "spark-cassandra-connector" % "2.4.2",
   "com.redislabs" % "spark-redis" % "2.4.0",
+
   "org.scalatest" %% "scalatest" % "3.1.0" % Test,
   "org.scalacheck" %% "scalacheck" % "1.14.3" % Test,
   "com.github.sebruck" %% "scalatest-embedded-redis" % "0.2.0" % Test,

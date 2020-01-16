@@ -2,6 +2,7 @@ package antibot
 
 import java.io.IOException
 import java.net.ServerSocket
+import java.time.Instant
 
 import com.datastax.spark.connector.cql.CassandraConnector
 import com.datastax.spark.connector.embedded._
@@ -132,7 +133,8 @@ trait AntibotSuite extends Suite with BeforeAndAfterAll with SparkTemplate
       System.setProperty("kafka.brokers",
         s"localhost:${implicitly[EmbeddedKafkaConfig].kafkaPort}")
       System.setProperty("kafka.fail-on-data-loss", "false")
-      System.setProperty("checkpoint-location", "target/checkpoint")
+      System.setProperty("checkpoint-location",
+        "target/" + Instant.now.getEpochSecond)
       useCassandraConfig(Seq(YamlTransformations.Default))
       useSparkConf(sparkConf)
       redis.start()

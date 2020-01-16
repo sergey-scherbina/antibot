@@ -2,17 +2,17 @@ package antibot
 
 import java.util.concurrent.atomic.AtomicBoolean
 
-import antibot.AntiBot._
 import antibot.Config._
 import antibot.DataFormat._
-import org.apache
-import org.apache.spark
+import com.datastax.driver.core.utils.UUIDs
 import org.apache.spark.sql._
 import org.apache.spark.sql.cassandra._
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.streaming._
 import org.apache.spark.sql.types._
 import org.slf4j.LoggerFactory
+
+import scala.concurrent.duration.Duration
 
 object AntiBotSS {
   val queryName = this.getClass.getCanonicalName
@@ -22,6 +22,23 @@ object AntiBotSS {
     logger.trace(s"$s($n): ${d.columns.mkString(", ")}")
     d.foreach(r => logger.trace(s"$s($n): $r"))
   }
+
+  val eventSchema = structType(
+    "type" -> StringType,
+    "ip" -> StringType,
+    "event_time" -> StringType,
+    "url" -> StringType
+  )
+
+  val cacheSchema = structType(
+    "ip" -> StringType,
+    "count" -> IntegerType,
+    "event_time" -> IntegerType
+  )
+
+  def duration(d: Duration) = s"${d.toMillis} millisecond"
+
+  val timeUUID = udf(() => UUIDs.timeBased().toString)
 
   def readCache(spark: SparkSession, schema: StructType = cacheSchema) = {
     import spark.implicits._
