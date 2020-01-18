@@ -13,17 +13,29 @@ class AntibotDSTest extends AnyFunSuite with AntibotSuite {
 
   override def stopAntibot(): Unit = AntiBotDS.stop()
 
-  def awaitComplete() = {
+  def awaitStarted() = {
+    logger.trace("Await started")
     val latch = Promise[Unit]()
-    AntiBotDS.awaitComplete { _ =>
-      if (!latch.isCompleted)
-        latch.complete(Try())
-    }
+    AntiBotDS.await(started = _ =>
+      if (!latch.isCompleted) latch.complete(Try()))
     Await.result(latch.future, Duration.Inf)
+    logger.trace("Started")
   }
-  
-  override def beforeStart(): Unit = awaitComplete()
-  override def beforeAssert(): Unit = awaitComplete()
+
+  def awaitCompleted() = {
+    logger.trace("Await completed")
+    val latch = Promise[Unit]()
+    AntiBotDS.await(completed = _ =>
+      if (!latch.isCompleted) latch.complete(Try()))
+    Await.result(latch.future, Duration.Inf)
+    logger.trace("Completed")
+  }
+
+  override def beforeStart(): Unit = {
+    awaitStarted()
+    awaitCompleted()
+  }
+  override def beforeAssert(): Unit = awaitCompleted()
 
   test("dstreams sanity check") {
     testAntibot()
