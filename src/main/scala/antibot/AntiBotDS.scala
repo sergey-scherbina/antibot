@@ -10,13 +10,11 @@ import org.apache.kafka.common.serialization.StringDeserializer
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.streaming._
-import org.apache.spark.streaming.kafka010.ConsumerStrategies.Subscribe
-import org.apache.spark.streaming.kafka010.LocationStrategies.PreferConsistent
 import org.apache.spark.streaming.kafka010._
 import org.apache.spark.streaming.scheduler._
 import org.json4s.JsonAST.{JInt, JString}
-import org.json4s.jackson.JsonMethods._
 import org.json4s._
+import org.json4s.jackson.JsonMethods._
 import org.slf4j.LoggerFactory
 
 import scala.language.postfixOps
@@ -68,33 +66,31 @@ object AntiBotDS {
       }
   } toIterable) flatten
 
-  lazy val streamingContext = StreamingContext.getActiveOrCreate(
-    config.checkpointLocation, () => {
-      val ssc = new StreamingContext(spark.sparkContext, Seconds(1))
-      ssc.checkpoint(config.checkpointLocation)
+  val kafkaParams = Map[String, Object](
+    "bootstrap.servers" -> config.kafka.brokers,
+    "key.deserializer" -> classOf[StringDeserializer],
+    "value.deserializer" -> classOf[StringDeserializer],
+    "group.id" -> config.kafka.groupId
+  )
 
-      val kafkaParams = Map[String, Object](
-        "bootstrap.servers" -> config.kafka.brokers,
-        "key.deserializer" -> classOf[StringDeserializer],
-        "value.deserializer" -> classOf[StringDeserializer],
-        "group.id" -> "antibot",
-        "auto.offset.reset" -> "latest"
-      )
+  lazy val streamingContext = StreamingContext.getActiveOrCreate(config.checkpointLocation, () => {
+    val ssc = new StreamingContext(spark.sparkContext, Seconds(1))
+    ssc.checkpoint(config.checkpointLocation)
 
-      KafkaUtils.createDirectStream[String, String](ssc, PreferConsistent,
-        Subscribe[String, String](Array(config.kafka.topic), kafkaParams))
-        .flatMap(r => Try(parse(r.value()).extract[Event]).recoverWith { case err =>
-          Function.const(Failure[Event](err))(logger.error("Parse error", err))
-        }.toOption).filter(_.`type` == "click").map(e => (e.ip, e))
-        .groupByKey().mapWithState(StateSpec.function(handleEvents _)
-        .timeout(Milliseconds(config.threshold.expire.toMillis)))
-        .flatMap(identity).foreachRDD { rdd =>
-        rdd.saveToCassandra(config.cassandra.keyspace, config.cassandra.table)
-        rdd.foreach(e => logger.debug(e.toString))
-      }
-
-      ssc
+    KafkaUtils.createDirectStream[String, String](ssc, LocationStrategies.PreferConsistent,
+      ConsumerStrategies.Subscribe[String, String](Array(config.kafka.topic), kafkaParams))
+      .flatMap(r => Try(parse(r.value()).extract[Event]).recoverWith { case err =>
+        Function.const(Failure[Event](err))(logger.error("Parse error", err))
+      }.toOption).filter(_.`type` == "click").map(e => (e.ip, e))
+      .groupByKey().mapWithState(StateSpec.function(handleEvents _)
+      .timeout(Milliseconds(config.threshold.expire.toMillis)))
+      .flatMap(identity).foreachRDD { rdd =>
+      rdd.saveToCassandra(config.cassandra.keyspace, config.cassandra.table)
+      rdd.foreach(e => logger.debug(e.toString))
     }
+
+    ssc
+  }
 
   )
 

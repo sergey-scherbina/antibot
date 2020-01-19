@@ -30,7 +30,7 @@ object Config {
                        slide: Duration = 1 second, expire: Duration = 10 minutes)
 
   case class KafkaConf(brokers: String = "localhost:9092", topic: String = "events",
-                       failOnDataLoss: Boolean = true) {
+                       groupId: String = "antibot", failOnDataLoss: Boolean = true) {
     def apply[F: DataFormat](f: F) = f.kafkaFormat(brokers, topic, failOnDataLoss)
   }
 
