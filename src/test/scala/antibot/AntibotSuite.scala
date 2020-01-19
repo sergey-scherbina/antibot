@@ -60,8 +60,9 @@ trait AntibotSuite extends Suite with BeforeAndAfterAll with SparkTemplate
   val cassandra = CassandraConnector(sparkConf)
 
   def mainArgs(): Array[String] = Array()
+  def startAntiBot(): Unit = ???
 
-  lazy val antiBot = Future(AntiBot.main(mainArgs()))
+  lazy val antiBot = Future(startAntiBot())
 
   val octet = Gen.choose(1, 255)
   val IP = for {x1 <- octet; x2 <- octet; x3 <- octet; x4 <- octet} yield s"$x1.$x2.$x3.$x4"

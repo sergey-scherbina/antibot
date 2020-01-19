@@ -2,15 +2,13 @@ package antibot
 
 import org.scalatest.funsuite._
 
-import scala.concurrent.{Await, Promise}
+import scala.concurrent._
 import scala.concurrent.duration.Duration
-import scala.util.Try
 import scala.concurrent.ExecutionContext.Implicits._
+import scala.util.Try
 
 class AntibotDSTest extends AnyFunSuite with AntibotSuite {
-
-  override def mainArgs(): Array[String] = Array("--ds")
-
+  override def startAntiBot(): Unit = AntiBotDS.main(mainArgs())
   override def stopAntibot(): Unit = AntiBotDS.stop()
 
   def awaitStarted() = {

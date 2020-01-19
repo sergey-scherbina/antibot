@@ -115,10 +115,7 @@ object AntiBotSS {
     logger.info(s"Stopped AntiBot")
   }
 
-  def stop(): Unit = {
-    if (started.get()) {
-      spark.streams.active.foreach(_.stop())
-    }
-  }
+  def stop(): Unit = if (started.get())
+    spark.streams.active.foreach(_.stop())
 
 }

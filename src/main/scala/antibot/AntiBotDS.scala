@@ -34,22 +34,15 @@ object AntiBotDS {
     d.foreach(r => logger.trace(s"$s($n): $r"))
   }
 
-  val started = new AtomicBoolean(false)
-
-  lazy val spark = config(SparkSession.builder)
-    .appName("AntiBot")
-    .config("spark.streaming.stopGracefullyOnShutdown", "true")
-    .getOrCreate()
-
   case class Event(`type`: String, ip: String, event_time: Long, url: String,
                    is_bot: Boolean = false, time_uuid: UUID = UUIDs.timeBased())
 
-  def mergeState(x: Option[(Long, Int)], y: Option[(Long, Int)]): Option[(Long, Int)] =
-    (for (m1@(t1, c1) <- x; m2@(t2, c2) <- y) yield {
+  def mergeState(x: Option[(Long, Int)],
+                 y: Option[(Long, Int)]): Option[(Long, Int)] =
+    (for (m1@(t1, c1) <- x; m2@(t2, c2) <- y) yield
       if ((t1 - t2).abs < config.threshold.count)
-        (t1 max t2, c1 + c2)
-      else if (t1 > t2) m1 else m2
-    }) orElse (x) orElse (y)
+        (t1 max t2, c1 + c2) else if (t1 > t2) m1
+      else m2) orElse (x) orElse (y)
 
   def handleEvents(key: String, events: Option[Iterable[Event]],
                    state: State[(Long, Int)]): Iterable[Event] = (events map { es =>
@@ -73,6 +66,13 @@ object AntiBotDS {
     "group.id" -> config.kafka.groupId
   )
 
+  val started = new AtomicBoolean(false)
+
+  lazy val spark = config(SparkSession.builder)
+    .appName("AntiBot")
+    .config("spark.streaming.stopGracefullyOnShutdown", "true")
+    .getOrCreate()
+
   lazy val streamingContext = StreamingContext.getActiveOrCreate(config.checkpointLocation, () => {
     val ssc = new StreamingContext(spark.sparkContext, Seconds(1))
     ssc.checkpoint(config.checkpointLocation)
@@ -86,16 +86,13 @@ object AntiBotDS {
       .timeout(Milliseconds(config.threshold.expire.toMillis)))
       .flatMap(identity).foreachRDD { rdd =>
       rdd.saveToCassandra(config.cassandra.keyspace, config.cassandra.table)
-      rdd.foreach(e => logger.debug(e.toString))
+      if (logger.isTraceEnabled) rdd.foreach(e => logger.trace(e.toString))
     }
 
     ssc
-  }
+  })
 
-  )
-
-  def await(started: Long => Unit = _ => (),
-            completed: BatchInfo => Unit = _ => ()) =
+  def await(started: Long => Unit = _ => (), completed: BatchInfo => Unit = _ => ()) =
     streamingContext.addStreamingListener(new StreamingListener {
       override def onStreamingStarted(streamingStarted: StreamingListenerStreamingStarted): Unit =
         started(streamingStarted.time)
