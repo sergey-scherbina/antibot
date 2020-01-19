@@ -19,6 +19,7 @@ import org.json4s.{CustomSerializer, DefaultFormats}
 import org.json4s.jackson.JsonMethods._
 import org.slf4j.LoggerFactory
 
+import scala.collection.immutable.Queue
 import scala.language.postfixOps
 import scala.util.{Failure, Try}
 
@@ -67,6 +68,24 @@ object AntiBotDS {
         es.map(_.copy(is_bot = isBot))
       } toIterable) flatten
 
+      def merge(x: Option[(Long, Int)], y: Option[(Long, Int)]): Option[(Long, Int)] =
+        (for (m1@(t1, c1) <- x; m2@(t2, c2) <- y) yield {
+          if ((t1 - t2).abs < config.threshold.count)
+            (t1 max t2, c1 + c2)
+          else if (t1 > t2) m1 else m2
+        }) orElse (x) orElse (y)
+
+      def handleEvents2(key: String, events: Option[Iterable[Event]],
+                        state: State[(Long, Int)]): Iterable[Event] = (events map { es =>
+        val s = merge(state.getOption(),
+          es.map(_.event_time).scanLeft(List[Long]())((q, a) =>
+            a :: q.filter(_ + config.threshold.window.toSeconds > a))
+            .map(x => (x.max, x.size)).filter(_._2 > config.threshold.count)
+            .reduceOption((a, b) => if (a._1 > b._1) a else b))
+        s.fold(state.remove())(state.update(_))
+        val isBot = s.isDefined
+        es.map(_.copy(is_bot = isBot))
+      } toIterable) flatten
 
       KafkaUtils.createDirectStream[String, String](ssc, PreferConsistent,
         Subscribe[String, String](Array(config.kafka.topic), kafkaParams))
