@@ -47,6 +47,28 @@ object AntiBotDS {
   case class Event(`type`: String, ip: String, event_time: Long, url: String,
                    is_bot: Boolean = false, time_uuid: UUID = UUIDs.timeBased())
 
+  def mergeState(x: Option[(Long, Int)], y: Option[(Long, Int)]): Option[(Long, Int)] =
+    (for (m1@(t1, c1) <- x; m2@(t2, c2) <- y) yield {
+      if ((t1 - t2).abs < config.threshold.count)
+        (t1 max t2, c1 + c2)
+      else if (t1 > t2) m1 else m2
+    }) orElse (x) orElse (y)
+
+  def handleEvents(key: String, events: Option[Iterable[Event]],
+                   state: State[(Long, Int)]): Iterable[Event] = (events map { es =>
+    val st = mergeState(state.getOption(), es.map(_.event_time)
+      .scanLeft(List[Long]())((q, a) =>
+        a :: q.filter(_ + config.threshold.window.toSeconds > a))
+      .filterNot(_.isEmpty).map(x => (x.max, x.size))
+      .reduceOption((a, b) => if (a._1 > b._1) a else b))
+    st.fold(state.remove())(state.update)
+    st.filter(_._2 >= config.threshold.count)
+      .fold(es.map(_.copy(is_bot = false))) { s =>
+        val expire = s._1 + config.threshold.expire.toSeconds
+        es.map(e => e.copy(is_bot = e.event_time < expire))
+      }
+  } toIterable) flatten
+
   lazy val streamingContext = StreamingContext.getActiveOrCreate(
     config.checkpointLocation, () => {
       val ssc = new StreamingContext(spark.sparkContext, Seconds(1))
@@ -59,27 +81,6 @@ object AntiBotDS {
         "group.id" -> "antibot",
         "auto.offset.reset" -> "latest"
       )
-
-      def mergeState(x: Option[(Long, Int)], y: Option[(Long, Int)]): Option[(Long, Int)] =
-        (for (m1@(t1, c1) <- x; m2@(t2, c2) <- y) yield {
-          if ((t1 - t2).abs < config.threshold.count)
-            (t1 max t2, c1 + c2)
-          else if (t1 > t2) m1 else m2
-        }) orElse (x) orElse (y)
-
-      def handleEvents(key: String, events: Option[Iterable[Event]],
-                       state: State[(Long, Int)]): Iterable[Event] = (events map { es =>
-        val st = mergeState(state.getOption(), es.map(_.event_time).scanLeft(List[Long]())((q, a) =>
-          a :: q.filter(_ + config.threshold.window.toSeconds > a)).filterNot(_.isEmpty)
-          .map(x => (x.max, x.size))
-          .reduceOption((a, b) => if (a._1 > b._1) a else b))
-        st.fold(state.remove())(state.update)
-        st.filter(_._2 >= config.threshold.count)
-          .fold(es.map(_.copy(is_bot = false))) { s =>
-            val expire = s._1 + config.threshold.expire.toSeconds
-            es.map(e => e.copy(is_bot = e.event_time < expire))
-          }
-      } toIterable) flatten
 
       KafkaUtils.createDirectStream[String, String](ssc, PreferConsistent,
         Subscribe[String, String](Array(config.kafka.topic), kafkaParams))
