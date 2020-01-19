@@ -13,13 +13,12 @@ import org.apache.spark.streaming._
 import org.apache.spark.streaming.kafka010.ConsumerStrategies.Subscribe
 import org.apache.spark.streaming.kafka010.LocationStrategies.PreferConsistent
 import org.apache.spark.streaming.kafka010._
-import org.apache.spark.streaming.scheduler.{BatchInfo, StreamingListener, StreamingListenerBatchCompleted, StreamingListenerStreamingStarted}
+import org.apache.spark.streaming.scheduler._
 import org.json4s.JsonAST.{JInt, JString}
-import org.json4s.{CustomSerializer, DefaultFormats}
 import org.json4s.jackson.JsonMethods._
+import org.json4s._
 import org.slf4j.LoggerFactory
 
-import scala.collection.immutable.Queue
 import scala.language.postfixOps
 import scala.util.{Failure, Try}
 
