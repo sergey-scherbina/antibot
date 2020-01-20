@@ -40,7 +40,7 @@ object AntiBotDS {
   def mergeState(x: Option[(Long, Int)],
                  y: Option[(Long, Int)]): Option[(Long, Int)] =
     (for (m1@(t1, c1) <- x; m2@(t2, c2) <- y) yield
-      if ((t1 - t2).abs < config.threshold.count)
+      if ((t1 - t2).abs <= config.threshold.window.toSeconds)
         (t1 max t2, c1 + c2) else if (t1 > t2) m1
       else m2) orElse (x) orElse (y)
 
