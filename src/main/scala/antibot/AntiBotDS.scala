@@ -37,25 +37,17 @@ object AntiBotDS {
   case class Event(`type`: String, ip: String, event_time: Long, url: String,
                    is_bot: Boolean = false, time_uuid: UUID = UUIDs.timeBased())
 
-  def mergeState(x: Option[(Long, Int)],
-                 y: Option[(Long, Int)]): Option[(Long, Int)] =
-    (for (m1@(t1, c1) <- x; m2@(t2, c2) <- y) yield
-      if ((t1 - t2).abs <= config.threshold.window.toSeconds)
-        (t1 max t2, c1 + c2) else if (t1 > t2) m1
-      else m2) orElse (x) orElse (y)
-
   def handleEvents(key: String, events: Option[Iterable[Event]],
-                   state: State[(Long, Int)]): Iterable[Event] =
-    (events map { es =>
-      val st = es.foldLeft(state.getOption())((s, e) =>
-        mergeState(s, Some((e.event_time, 1))))
-      st.fold(state.remove())(state.update)
-      st.filter(_._2 >= config.threshold.count)
-        .fold(es.map(_.copy(is_bot = false))) { s =>
-          val expire = s._1 + config.threshold.expire.toSeconds
-          es.map(e => e.copy(is_bot = e.event_time < expire))
-        }
-    } toIterable) flatten
+                   state: State[(Long, Int)]): Iterable[Event] = (events map { es =>
+    val st = es.foldLeft(state.getOption())((s, e) =>
+      s.filter(x => (e.event_time - x._1).abs <= config.threshold.window.toSeconds)
+        .map(x => (e.event_time max x._1, x._2 + 1)).orElse(Some(e.event_time, 1)))
+    st.fold(state.remove())(state.update)
+    st.filter(_._2 >= config.threshold.count).fold(es.map(_.copy(is_bot = false))) { s =>
+      val expire = s._1 + config.threshold.expire.toSeconds
+      es.map(e => e.copy(is_bot = e.event_time < expire))
+    }
+  } toIterable) flatten
 
   val kafkaParams = Map[String, Object](
     "bootstrap.servers" -> config.kafka.brokers,
