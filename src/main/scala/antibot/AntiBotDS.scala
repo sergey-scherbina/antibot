@@ -39,14 +39,15 @@ object AntiBotDS {
 
   def handleEvents(key: String, events: Option[Iterable[Event]],
                    state: State[(Long, Int)]): Iterable[Event] = (events map { es =>
-    val st = es.foldLeft(state.getOption())((s, e) =>
-      s.filter(x => (e.event_time - x._1).abs <= config.threshold.window.toSeconds)
-        .map(x => (e.event_time max x._1, x._2 + 1)).orElse(Some(e.event_time, 1)))
+    val st = es.foldLeft(state.getOption())((s, e) => (for (
+      (t, c) <- s if (e.event_time - t).abs <= config.threshold.window.toSeconds)
+      yield (e.event_time max t, c + 1)) orElse Some((e.event_time, 1)))
     st.fold(state.remove())(state.update)
-    st.filter(_._2 >= config.threshold.count).fold(es.map(_.copy(is_bot = false))) { s =>
-      val expire = s._1 + config.threshold.expire.toSeconds
-      es.map(e => e.copy(is_bot = e.event_time < expire))
-    }
+    st.filter(_._2 >= config.threshold.count)
+      .fold(es.map(_.copy(is_bot = false))) { s =>
+        val expire = s._1 + config.threshold.expire.toSeconds
+        es.map(e => e.copy(is_bot = e.event_time < expire))
+      }
   } toIterable) flatten
 
   val kafkaParams = Map[String, Object](
