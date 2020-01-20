@@ -45,19 +45,17 @@ object AntiBotDS {
       else m2) orElse (x) orElse (y)
 
   def handleEvents(key: String, events: Option[Iterable[Event]],
-                   state: State[(Long, Int)]): Iterable[Event] = (events map { es =>
-    val st = mergeState(state.getOption(), es.map(_.event_time)
-      .scanLeft(List[Long]())((q, a) =>
-        a :: q.filter(_ + config.threshold.window.toSeconds > a))
-      .filterNot(_.isEmpty).map(x => (x.max, x.size))
-      .reduceOption((a, b) => if (a._1 > b._1) a else b))
-    st.fold(state.remove())(state.update)
-    st.filter(_._2 >= config.threshold.count)
-      .fold(es.map(_.copy(is_bot = false))) { s =>
-        val expire = s._1 + config.threshold.expire.toSeconds
-        es.map(e => e.copy(is_bot = e.event_time < expire))
-      }
-  } toIterable) flatten
+                   state: State[(Long, Int)]): Iterable[Event] =
+    (events map { es =>
+      val st = es.foldLeft(state.getOption())((s, e) =>
+        mergeState(s, Some((e.event_time, 1))))
+      st.fold(state.remove())(state.update)
+      st.filter(_._2 >= config.threshold.count)
+        .fold(es.map(_.copy(is_bot = false))) { s =>
+          val expire = s._1 + config.threshold.expire.toSeconds
+          es.map(e => e.copy(is_bot = e.event_time < expire))
+        }
+    } toIterable) flatten
 
   val kafkaParams = Map[String, Object](
     "bootstrap.servers" -> config.kafka.brokers,
