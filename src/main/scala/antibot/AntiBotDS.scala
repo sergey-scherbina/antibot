@@ -10,6 +10,7 @@ import org.apache.kafka.common.serialization.StringDeserializer
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.streaming._
+import org.apache.spark.streaming.dstream.DStream
 import org.apache.spark.streaming.kafka010._
 import org.apache.spark.streaming.scheduler._
 import org.json4s.JsonAST.{JInt, JString}
@@ -21,6 +22,23 @@ import scala.language.postfixOps
 import scala.util.{Failure, Try}
 
 object AntiBotDS {
+  type Time = Long
+
+  case class Event(`type`: String, ip: String, event_time: Time, url: String,
+                   is_bot: Boolean = false, time_uuid: UUID = UUIDs.timeBased())
+
+  case class Activity(lastTime: Time = 0, count: Long = 0, detected: Option[Time] = None) {
+    def isBot(time: Time): Boolean = detected.exists(t =>
+      time <= t + config.threshold.expire.toSeconds)
+
+    def +(newTime: Time): Activity = {
+      val (last, first) = (newTime max lastTime, newTime min lastTime)
+      if (last - first <= config.threshold.window.toSeconds) {
+        if (count >= config.threshold.count) Activity(last, 1, Some(last))
+        else Activity(last, count + 1, detected)
+      } else Activity(last, 1)
+    }
+  }
 
   implicit val formats = DefaultFormats + new CustomSerializer[Long](_ => ( {
     case JString(x) => x.toLong
@@ -48,10 +66,7 @@ object AntiBotDS {
     .config("spark.streaming.stopGracefullyOnShutdown", "true")
     .getOrCreate()
 
-  case class Event(`type`: String, ip: String, event_time: Long, url: String,
-                   is_bot: Boolean = false, time_uuid: UUID = UUIDs.timeBased())
-
-  def eventsStream(ssc: StreamingContext) =
+  def eventsStream(ssc: StreamingContext): DStream[Event] =
     KafkaUtils.createDirectStream[String, String](ssc, LocationStrategies.PreferConsistent,
       ConsumerStrategies.Subscribe[String, String](Array(config.kafka.topic), kafkaParams))
       .flatMap(r => Try(parse(r.value()).extract[Event]).recoverWith { case err =>
@@ -59,14 +74,10 @@ object AntiBotDS {
       }.toOption).filter(_.`type` == "click")
 
   def detectBots(key: String, events: Option[Iterable[Event]],
-                 state: State[(Long, Int)]): Iterable[Event] = (events map { es =>
-    val s@(t, c) = es.foldLeft(state.getOption().getOrElse((0L, 0)))((s, e) =>
-      if ((e.event_time - s._1).abs > config.threshold.window.toSeconds)
-        (e.event_time, 1) else (e.event_time max s._1, s._2 + 1))
-    if (c > 0) state.update(s) else state.remove()
-    val isBot = c >= config.threshold.count
-    val expire = t + config.threshold.expire.toSeconds
-    es.map(e => e.copy(is_bot = isBot && e.event_time < expire))
+                 state: State[Activity]): Iterable[Event] = (events map { es =>
+    val s = es.map(_.event_time).foldLeft(state.getOption().getOrElse(Activity()))(_ + _)
+    state.update(s)
+    es.map(e => e.copy(is_bot = s.isBot(e.event_time)))
   } toIterable) flatten
 
   lazy val streamingContext = StreamingContext.getActiveOrCreate(config.checkpointLocation, () => {
