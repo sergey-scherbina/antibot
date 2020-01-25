@@ -27,9 +27,10 @@ object AntiBotDS {
   case class Event(`type`: String, ip: String, event_time: Time, url: String,
                    is_bot: Boolean = false, time_uuid: UUID = UUIDs.timeBased())
 
-  case class Activity(lastTime: Time = 0, count: Long = 0, detected: Option[Time] = None) {
-    def isBot(time: Time): Boolean = detected.exists(t =>
-      time <= t + config.threshold.expire.toSeconds)
+  case class Activity(lastTime: Time = 0, count: Long = 0,
+                      detected: Option[Time] = None) {
+    def isBot(time: Time): Boolean = detected.exists(time <=
+      _ + config.threshold.expire.toSeconds)
 
     def +(newTime: Time): Activity = {
       val (last, first) = (newTime max lastTime, newTime min lastTime)
@@ -74,16 +75,17 @@ object AntiBotDS {
       }.toOption).filter(_.`type` == "click")
 
   def detectBots(key: String, events: Option[Iterable[Event]],
-                 state: State[Activity]): Iterable[Event] = (events map { es =>
-    val s = es.map(_.event_time).foldLeft(state.getOption().getOrElse(Activity()))(_ + _)
-    state.update(s)
-    es.map(e => e.copy(is_bot = s.isBot(e.event_time)))
-  } toIterable) flatten
+                 state: State[Activity]): Iterable[Event] =
+    (events map { es =>
+      val s = es.map(_.event_time).foldLeft(state.getOption()
+        .getOrElse(Activity()))(_ + _)
+      state.update(s)
+      es.map(e => e.copy(is_bot = s.isBot(e.event_time)))
+    } toIterable) flatten
 
   lazy val streamingContext = StreamingContext.getActiveOrCreate(config.checkpointLocation, () => {
     val ssc = new StreamingContext(spark.sparkContext, Milliseconds(config.threshold.slide.toMillis))
     ssc.checkpoint(config.checkpointLocation)
-
     eventsStream(ssc).map(e => (e.ip, e))
       .groupByKey().mapWithState(StateSpec.function(detectBots _)
       .timeout(Milliseconds(config.threshold.expire.toMillis)))
@@ -91,7 +93,6 @@ object AntiBotDS {
       rdd.saveToCassandra(config.cassandra.keyspace, config.cassandra.table)
       if (logger.isTraceEnabled) rdd.foreach(e => logger.trace(e.toString))
     }
-
     ssc
   })
 
