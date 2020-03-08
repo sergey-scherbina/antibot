@@ -88,7 +88,9 @@ object AntiBotSS {
             .sort("count").groupBy("ip")
             .agg(max("count").as("count"),
               last("event_time").as("event_time"))
-            .unionByName(readCache(spark)).groupBy("ip")
+            .unionByName(readCache(spark))
+            .groupBy($"ip", window(to_timestamp(from_unixtime($"event_time")),
+              duration(config.threshold.expire)))
             .agg(sum("count").as("count"),
               max("event_time").as("event_time"))
         })
@@ -96,7 +98,9 @@ object AntiBotSS {
         trace(n, "output",
           e.as("e").join(cache.where(
             $"count" >= config.threshold.count).as("c"),
-            $"e.ip" === $"c.ip", "left")
+            $"e.ip" === $"c.ip" && $"e.event_time".between(
+              unix_timestamp($"c.window.start"), unix_timestamp($"c.window.end")),
+            "left")
             .select(e("type"), e("ip"), e("event_time"),
               $"c.count".isNotNull.as("is_bot"),
               e("time_uuid"), e("url")))

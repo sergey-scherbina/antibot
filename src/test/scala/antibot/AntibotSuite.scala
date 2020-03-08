@@ -70,12 +70,14 @@ trait AntibotSuite extends Suite with BeforeAndAfterAll with SparkTemplate
 
   def timestamp() = System.currentTimeMillis() / 1000
 
-  def click(ip: String, rand: Boolean = false) = {
-    val event_time = timestamp() + (if (rand) Random.nextInt(10) *
-      (if (Random.nextBoolean()) 1 else -1) else 0)
+  def eventTime(rand: Boolean = false, delay: Long = 0) = timestamp() +
+    (if (rand) Random.nextInt(10) * (if (Random.nextBoolean()) 1 else -1) else 0) + delay
+
+  def click(ip: String, event_time: Long = eventTime()) = {
+    logger.trace(s"click $ip, $event_time")
     publishStringMessageToKafka(TOPIC,
       s"""{"type": "click", "ip": "${ip}", "event_time": "$event_time",
-         | "url": "https://blog.griddynamics.com/in-stream-processing-service-blueprint"}"""
+         | "url": "https://blog.griddynamics.com/"}"""
         .stripMargin)
     event_time
   }
@@ -83,7 +85,7 @@ trait AntibotSuite extends Suite with BeforeAndAfterAll with SparkTemplate
   var bots = Map[String, List[(Long, Boolean)]]()
     .withDefaultValue(List())
 
-  def bot(ip: String, times: Port) = {
+  def bot(ip: String, times: Int = THRESHOLD.count * 2) = {
     val isBot = times >= THRESHOLD.count
     logger.trace(s"$ip clicks $times times (${
       if (isBot) "bot" else "not bot"
@@ -93,6 +95,8 @@ trait AntibotSuite extends Suite with BeforeAndAfterAll with SparkTemplate
       else bots = bots.updated(ip, click(ip) -> isBot :: bots(ip))
     true
   }
+
+  def notBot(ip: String) = bot(ip, THRESHOLD.count / 2)
 
   def runBots() = Prop.forAll(clicks)(Function.tupled(bot)) check
 
@@ -113,6 +117,34 @@ trait AntibotSuite extends Suite with BeforeAndAfterAll with SparkTemplate
         }
       }
     }
+  }
+
+  def checkBot(ip: String, is_bot: Boolean) =
+    cassandra.withSessionDo(_.execute(
+      s"""
+         |select is_bot from antibot.events
+         | where ip = '$ip'
+         | and is_bot = true allow filtering
+         |""".stripMargin
+    ).iterator().hasNext == is_bot)
+
+  def assertBot(ip: String) = {
+    assert(checkBot(ip, true), s"$ip is not bot")
+  }
+
+  def assertNotBot(ip: String) = {
+    assert(checkBot(ip, false), s"$ip is bot")
+  }
+
+  def assertClick(ip: String, event_time: Long, is_bot: Boolean) = {
+    val condition = cassandra.withSessionDo(_.execute(
+      s"""
+         |select is_bot from antibot.events
+         | where ip = '$ip' and event_time = $event_time
+         | and is_bot = $is_bot allow filtering
+         |""".stripMargin
+    ).iterator().hasNext)
+    assert(condition, s"assertClick: $ip $event_time $is_bot")
   }
 
   def beforeStart() = {}
