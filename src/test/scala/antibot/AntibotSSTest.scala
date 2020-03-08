@@ -8,7 +8,7 @@ class AntibotSSTest extends AnyFunSuite with AntibotSuite {
   override def beforeStart() = waitStreams(AntiBotSS.queryName)
   override def beforeAssert() = waitStreams(AntiBotSS.queryName)
 
-  test("proof test") {
+  test("proof test Structured Stream") {
 
     val bot1 = "1.2.3.4"
     val bot2 = "5.6.7.8"
@@ -22,7 +22,7 @@ class AntibotSSTest extends AnyFunSuite with AntibotSuite {
     bot(bot2)
     notBot(notBot2)
 
-    Thread.sleep(10000)
+    Thread.sleep(1000)
     beforeAssert()
 
     assertBot(bot1)

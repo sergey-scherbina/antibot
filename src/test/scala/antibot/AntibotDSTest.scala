@@ -34,7 +34,7 @@ class AntibotDSTest extends AnyFunSuite with AntibotSuite {
   }
   override def beforeAssert(): Unit = awaitCompleted()
 
-  test("proof test") {
+  test("proof test DStream") {
 
     val bot1 = "1.2.3.4"
     val bot2 = "5.6.7.8"
@@ -48,7 +48,7 @@ class AntibotDSTest extends AnyFunSuite with AntibotSuite {
     bot(bot2)
     notBot(notBot2)
 
-    Thread.sleep(10000)
+    Thread.sleep(1000)
     beforeAssert()
 
     assertBot(bot1)
